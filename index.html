@@ -492,9 +492,12 @@
                                             <p class="text-xs text-slate-400">${new Date(t.date).toLocaleDateString()}</p>
                                         </div>
                                     </div>
-                                    <div class="text-right">
-                                        <p class="font-bold ${t.type === 'Income' ? 'text-green-600' : 'text-slate-800'}">${t.type==='Income'?'+':'-'} ${t.originalCurrency === 'GBP' ? '£' : 'HK$'}${t.originalAmount}</p>
-                                        ${t.originalCurrency === 'HKD' ? `<p class="text-[10px] text-slate-400">≈ £${t.amount.toFixed(2)}</p>` : ''}
+                                    <div class="flex items-center gap-3 text-right">
+                                        <div>
+                                            <p class="font-bold ${t.type === 'Income' ? 'text-green-600' : 'text-slate-800'}">${t.type==='Income'?'+':'-'} ${t.originalCurrency === 'GBP' ? '£' : 'HK$'}${t.originalAmount}</p>
+                                            ${t.originalCurrency === 'HKD' ? `<p class="text-[10px] text-slate-400">≈ £${t.amount.toFixed(2)}</p>` : ''}
+                                        </div>
+                                        <button onclick="deleteLog('transactions', '${t.id}')" class="text-slate-300 hover:text-red-400 p-2"><i data-lucide="trash-2" width="16"></i></button>
                                     </div>
                                 </div>
                             `).join('')}
@@ -568,78 +571,320 @@
             });
             const totalExp = Object.values(expenses).reduce((a,b)=>a+b, 0);
 
-            // Particles logic
+            // Logic Update:
+            // 1. Droplets = Income
+            // 2. Vase Size = Expense Amount
+            // 3. Simulation:
+            //    If Income < Expense: Vases fill proportionally (partially).
+            //    If Income > Expense: Vases fill completely, overflow to floor.
+
+            const PARTICLE_VAL = Math.max(income, totalExp) > 10000 ? 50 : Math.max(income, totalExp) > 5000 ? 20 : 5;
+            
+            // Total Particles representing Income
+            const totalIncomeParticles = Math.floor(income / PARTICLE_VAL);
+            
+            // Calculate Vase Capacities (in particles)
+            const vaseConfig = {};
             const vases = Object.values(ExpenseCategory);
             const slotW = (width - 30) / vases.length;
-            const dropletVal = Math.max(income, totalExp) > 5000 ? 10 : 1;
-            
-            const particles = [];
-            
-            // Generate Drops
+
+            const maxExp = Math.max(1, Math.max(...Object.values(expenses)));
+
             vases.forEach((v, i) => {
-                const amount = expenses[v];
-                if(amount <= 0) return;
-                const count = Math.min(Math.ceil(amount / dropletVal), 200); // cap for perf
-                const vaseW = slotW * 0.8;
-                const x = 15 + (i * slotW) + (slotW - vaseW)/2;
-                const vaseH = 40 + (amount / (Math.max(1, Math.max(...Object.values(expenses)))) * 140);
+                const amt = expenses[v];
+                // Vase physical height depends on expense amount relative to max
+                // But visual fill depends on income vs expense
+                const h = amt > 0 ? 40 + ((amt / maxExp) * 140) : 0;
                 
-                for(let j=0; j<count; j++) {
+                // Capacity in particles
+                const capacity = Math.ceil(amt / PARTICLE_VAL);
+
+                const vaseW = slotW * 0.85;
+                const x = 15 + (i * slotW) + (slotW - vaseW)/2;
+                
+                vaseConfig[v] = { x, y: height - 30, w: vaseW, h, capacity, fillCount: 0 };
+            });
+
+            // Distribute Particles
+            let overflowParticles = 0;
+            
+            if (income >= totalExp) {
+                // Fill all vases to capacity
+                vases.forEach(v => {
+                    vaseConfig[v].fillCount = vaseConfig[v].capacity;
+                });
+                // Remainder is overflow
+                overflowParticles = totalIncomeParticles - Object.values(vaseConfig).reduce((acc, val) => acc + val.capacity, 0);
+            } else {
+                // Distribute proportional to capacity
+                // If I have 50% income coverage, all vases are 50% full
+                const ratio = totalExp > 0 ? income / totalExp : 0;
+                vases.forEach(v => {
+                    vaseConfig[v].fillCount = Math.floor(vaseConfig[v].capacity * ratio);
+                });
+            }
+
+            const particles = [];
+            const TAP_X = width/2;
+            const TAP_Y = 50;
+
+            // Generate Vase Particles
+            vases.forEach((v, i) => {
+                const config = vaseConfig[v];
+                if(config.h === 0 || config.fillCount <= 0) return;
+                
+                // Pack them
+                const packSpacing = 6;
+                const itemsPerRow = Math.max(1, Math.floor((config.w * 0.8) / packSpacing));
+                const centerX = config.x + config.w/2;
+                
+                for(let j=0; j<config.fillCount; j++) {
+                    if(j > 500) break; // limit visual
+                    const row = Math.floor(j / itemsPerRow);
+                    const col = j % itemsPerRow;
+                    const rowW = (Math.min(config.fillCount - row*itemsPerRow, itemsPerRow) - 1) * packSpacing;
+                    
+                    const tx = centerX - (rowW/2) + (col * packSpacing);
+                    const ty = config.y - 5 - (row * packSpacing);
+                    
+                    // Don't go above rim
+                    if(ty < config.y - config.h) break;
+
                     particles.push({
-                        x: width/2, y: 50,
-                        tx: x + Math.random()*vaseW, ty: height - 30 - Math.random()*(vaseH-10),
-                        vx: 0, vy: 0,
-                        delay: j + (i*10), settled: false
+                        x: TAP_X, y: TAP_Y + 15,
+                        tx, ty,
+                        vx: (Math.random()-0.5)*5, vy: Math.random()*2,
+                        delay: j + (i*10), settled: false,
+                        type: 'vase'
                     });
                 }
             });
+
+            // Generate Overflow Particles
+            const safeOverflow = Math.min(Math.max(0, overflowParticles), 300);
+            for(let j=0; j<safeOverflow; j++) {
+                const tx = Math.random() * width;
+                const ty = height - 30 - Math.random()*10;
+                particles.push({
+                    x: TAP_X, y: TAP_Y + 15,
+                    tx, ty,
+                    vx: (Math.random()-0.5)*10, vy: Math.random()*2,
+                    delay: 200 + j, settled: false,
+                    type: 'floor'
+                });
+            }
+
+            // --- DRAWING FUNCTIONS ---
+
+            const drawCurvyVase = (ctx, x, bottomY, w, h) => {
+                const cx = x + w/2;
+                const topY = bottomY - h;
+                
+                ctx.save();
+                ctx.beginPath();
+                
+                // Styles per reference: Blue dotted pattern
+                const patternSize = 4;
+                
+                // Draw Shape Path
+                // Rim
+                const rimW = w * 0.7;
+                const neckW = w * 0.4;
+                const bodyW = w; 
+                const baseW = w * 0.6;
+                
+                ctx.moveTo(cx - rimW/2, topY);
+                // Neck curve in
+                ctx.bezierCurveTo(cx - rimW/2, topY + h*0.2, cx - neckW/2, topY + h*0.3, cx - neckW/2, topY + h*0.4);
+                // Body curve out
+                ctx.bezierCurveTo(cx - neckW/2, topY + h*0.6, cx - bodyW/2, topY + h*0.6, cx - bodyW/2, topY + h*0.8);
+                // Base curve in
+                ctx.bezierCurveTo(cx - bodyW/2, bottomY, cx - baseW/2, bottomY, cx - baseW/2, bottomY);
+                // Base line
+                ctx.lineTo(cx + baseW/2, bottomY);
+                // Mirror right side
+                ctx.bezierCurveTo(cx + baseW/2, bottomY, cx + bodyW/2, bottomY, cx + bodyW/2, topY + h*0.8);
+                ctx.bezierCurveTo(cx + bodyW/2, topY + h*0.6, cx + neckW/2, topY + h*0.6, cx + neckW/2, topY + h*0.4);
+                ctx.bezierCurveTo(cx + neckW/2, topY + h*0.3, cx + rimW/2, topY + h*0.2, cx + rimW/2, topY);
+                
+                ctx.closePath();
+                
+                // Fill with light blue
+                ctx.fillStyle = '#bae6fd'; // Sky 200
+                ctx.fill();
+                
+                // Clip for dots
+                ctx.save();
+                ctx.clip();
+                ctx.fillStyle = '#3b82f6'; // Blue 500
+                for(let py = topY; py < bottomY; py += patternSize*1.5) {
+                    const offset = (Math.floor(py/(patternSize*1.5)) % 2) * (patternSize);
+                    for(let px = x - w; px < x + w*2; px += patternSize*2) {
+                        ctx.beginPath();
+                        ctx.arc(px + offset, py, 1, 0, Math.PI*2);
+                        ctx.fill();
+                    }
+                }
+                ctx.restore();
+                
+                // Stroke outline
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#000';
+                ctx.stroke();
+                
+                // Rim Ellipse
+                ctx.beginPath();
+                ctx.ellipse(cx, topY, rimW/2, 3, 0, 0, Math.PI*2);
+                ctx.fillStyle = '#bae6fd';
+                ctx.fill();
+                ctx.stroke();
+                
+                ctx.restore();
+            };
+
+            const drawSilverTap = (ctx, x, y) => {
+                ctx.save();
+                ctx.translate(x, y);
+                const scale = 0.8;
+                ctx.scale(scale, scale);
+                
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#334155';
+                
+                // Base Pipe (Vertical)
+                ctx.fillStyle = '#cbd5e1'; // Slate 300
+                ctx.beginPath();
+                ctx.rect(-10, -30, 20, 30);
+                ctx.fill(); ctx.stroke();
+                
+                // Handle Stem
+                ctx.beginPath();
+                ctx.rect(-4, -45, 8, 15);
+                ctx.fill(); ctx.stroke();
+                
+                // Handle Turn (Top)
+                ctx.fillStyle = '#94a3b8'; // Slate 400
+                ctx.beginPath();
+                ctx.roundRect(-20, -55, 40, 10, 3);
+                ctx.fill(); ctx.stroke();
+                
+                // Spout Body (Horizontal curve)
+                ctx.fillStyle = '#cbd5e1';
+                ctx.beginPath();
+                ctx.moveTo(-12, -10);
+                ctx.lineTo(25, -10);
+                ctx.bezierCurveTo(45, -10, 45, 10, 25, 10); // Spout opening
+                ctx.lineTo(-12, 10);
+                ctx.fill(); ctx.stroke();
+                
+                // Spout Tip
+                ctx.fillStyle = '#64748b';
+                ctx.beginPath();
+                ctx.ellipse(30, 2, 8, 4, 0, 0, Math.PI*2);
+                ctx.fill(); ctx.stroke();
+                
+                // Water stream start
+                // ctx.fillStyle = '#3b82f6';
+                // ctx.beginPath();
+                // ctx.rect(26, 6, 8, 10);
+                // ctx.fill();
+
+                ctx.restore();
+            };
+
+            const drawTearDrop = (ctx, x, y, r, color) => {
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.fillStyle = color;
+                ctx.strokeStyle = '#1e3a8a';
+                ctx.lineWidth = 0.5;
+                
+                ctx.beginPath();
+                // Tear drop shape
+                ctx.moveTo(0, -r*1.8); 
+                ctx.quadraticCurveTo(r, -r*0.5, r, r*0.5); 
+                ctx.arc(0, r*0.5, r, 0, Math.PI); 
+                ctx.quadraticCurveTo(-r, -r*0.5, 0, -r*1.8);
+                
+                ctx.fill();
+                ctx.stroke();
+                
+                // Shine
+                ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                ctx.beginPath();
+                ctx.ellipse(-r*0.3, 0, r*0.15, r*0.4, 0.2, 0, Math.PI*2);
+                ctx.fill();
+                
+                ctx.restore();
+            };
 
             let frame = 0;
             function animate() {
                 frame++;
                 ctx.clearRect(0,0,width,height);
                 
-                // Draw Vases (Background)
+                // Floor
+                ctx.beginPath(); ctx.moveTo(0, height-30); ctx.lineTo(width, height-30); 
+                ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2; ctx.stroke();
+
+                // Vases
                 vases.forEach((v, i) => {
-                   const amount = expenses[v];
-                   const vaseW = slotW * 0.8;
-                   const x = 15 + (i * slotW) + (slotW - vaseW)/2;
-                   const h = amount > 0 ? 40 + (amount / (Math.max(1, Math.max(...Object.values(expenses)))) * 140) : 0;
-                   if(h > 0) {
-                       ctx.fillStyle = '#dcfce7';
-                       ctx.beginPath();
-                       ctx.roundRect(x, height - 30 - h, vaseW, h, 0); // Simplified vase shape
-                       ctx.fill();
-                       ctx.strokeStyle = '#166534';
-                       ctx.stroke();
+                   const config = vaseConfig[v];
+                   if(config.h > 0) {
+                       drawCurvyVase(ctx, config.x, height-30, config.w, config.h);
+                   } else {
+                       ctx.fillStyle = '#94a3b8';
+                       ctx.font = '9px Inter';
+                       ctx.textAlign = 'center';
+                       ctx.fillText(v.split(' ')[0], config.x + config.w/2, height - 15);
                    }
-                   // Label
-                   ctx.fillStyle = '#475569';
-                   ctx.font = '9px Inter';
-                   ctx.textAlign = 'center';
-                   ctx.fillText(v.split(' ')[0], x + vaseW/2, height - 15);
-                   ctx.fillText('£'+amount.toFixed(0), x + vaseW/2, height - 5);
                 });
 
-                // Floor
-                ctx.beginPath(); ctx.moveTo(0, height-30); ctx.lineTo(width, height-30); ctx.stroke();
-
                 // Particles
-                ctx.fillStyle = '#3b82f6';
                 particles.forEach(p => {
                     if(frame < p.delay) return;
                     if(!p.settled) {
-                        p.vy += 0.5;
-                        p.x += (p.tx - p.x) * 0.1;
+                        p.vy += 0.2;
+                        p.x += (p.tx - p.x) * 0.08;
                         p.y += p.vy;
+                        
                         if(p.y >= p.ty) { p.y = p.ty; p.settled = true; }
                     }
-                    ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, Math.PI*2); ctx.fill();
+                    drawTearDrop(ctx, p.x, p.y, 3, '#3b82f6');
                 });
 
                 // Tap
-                ctx.fillStyle = '#fbbf24';
-                ctx.beginPath(); ctx.arc(width/2, 40, 10, 0, Math.PI*2); ctx.fill();
+                drawSilverTap(ctx, TAP_X, TAP_Y);
+
+                // Labels
+                vases.forEach((v) => {
+                    const config = vaseConfig[v];
+                    if(config.h > 0) {
+                        const amt = expenses[v];
+                        const cx = config.x + config.w/2;
+                        const topY = height - 30 - config.h;
+                        
+                        ctx.font = 'bold 9px Inter';
+                        const txt = '£' + amt.toFixed(0);
+                        const tm = ctx.measureText(txt);
+                        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+                        ctx.fillRect(cx - tm.width/2 - 2, topY - 12, tm.width + 4, 10);
+                        ctx.fillStyle = '#166534';
+                        ctx.textAlign = 'center';
+                        ctx.fillText(txt, cx, topY - 4);
+                        
+                        ctx.fillStyle = '#475569';
+                        ctx.fillText(v.split(' ')[0], cx, height - 15);
+                    }
+                });
+                
+                // Info Overlay
+                ctx.textAlign = 'left';
+                ctx.font = 'bold 12px Inter';
+                ctx.fillStyle = '#059669'; 
+                ctx.fillText(`Income (Droplets): £${income.toFixed(0)}`, 20, 20);
+                ctx.fillStyle = '#dc2626'; 
+                ctx.fillText(`Expense (Vases): £${totalExp.toFixed(0)}`, 20, 36);
 
                 if(animationId) animationId = requestAnimationFrame(animate);
             }
