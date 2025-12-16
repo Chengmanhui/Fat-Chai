@@ -5,983 +5,1735 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>LifeTracker for Fat Boy</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://unpkg.com/lucide@latest"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
         body { font-family: 'Inter', sans-serif; background-color: #f8fafc; -webkit-tap-highlight-color: transparent; }
         ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
         .pb-safe { padding-bottom: env(safe-area-inset-bottom); }
-        .tab-btn.active { color: #0ea5e9; }
-        .tab-btn.active svg { stroke-width: 2.5; }
     </style>
-<script type="importmap">
-{
-  "imports": {
-    "react": "https://esm.sh/react@^19.2.3",
-    "lucide-react": "https://esm.sh/lucide-react@^0.560.0",
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "recharts": "https://esm.sh/recharts@^3.5.1"
-  }
-}
-</script>
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@19.0.0",
+        "react-dom": "https://esm.sh/react-dom@19.0.0",
+        "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.344.0?external=react,react-dom",
+        "recharts": "https://esm.sh/recharts@2.15.0?external=react,react-dom",
+        "react-dom/": "https://esm.sh/react-dom@19.0.0/",
+        "react/": "https://esm.sh/react@19.0.0/"
+      }
+    }
+    </script>
 </head>
 <body class="text-slate-800">
+    <div id="root" class="flex-1 w-full min-h-screen flex flex-col"></div>
 
-    <!-- Header -->
-    <header class="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-pink-100 shadow-sm">
-        <div class="max-w-md mx-auto px-4 py-4 flex justify-between items-center">
-            <button onclick="router.navigate('summary')" class="text-xl font-bold bg-gradient-to-r from-pink-400 to-sky-400 bg-clip-text text-transparent">
-                LifeTracker
-            </button>
-            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-pink-200 to-sky-200 flex items-center justify-center text-xs font-bold text-white shadow-inner">
-                FB
-            </div>
-        </div>
-        <div id="alert-banner" class="hidden bg-red-500 text-white px-4 py-2 text-sm text-center animate-pulse"></div>
-    </header>
+    <script type="text/babel" data-type="module" data-presets="react,typescript">
+        import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { Activity, Apple, Wallet, BarChart2, Landmark, Home, Plus, Trash2, Check, X, Clock, Zap, PoundSterling, Coins, Droplets, Minus, Settings, Edit2, Save } from 'lucide-react';
+        import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
-    <!-- Main Content Area -->
-    <main id="app" class="flex-1 w-full max-w-md mx-auto p-4 pb-24 min-h-screen"></main>
+        // --- TYPES & CONSTANTS ---
 
-    <!-- Bottom Navigation -->
-    <nav class="fixed bottom-0 left-0 right-0 bg-white border-t border-sky-100 pb-safe z-40">
-        <div class="max-w-md mx-auto flex justify-around items-center h-16 px-1" id="nav-container">
-            <!-- Nav items injected by JS -->
-        </div>
-    </nav>
-
-    <script>
-        // --- 1. STATE MANAGEMENT ---
-        const DB_KEYS = {
-            TAB: 'active_tab',
-            WEIGHT: 'weight_logs',
-            DIET: 'diet_logs',
-            EXERCISE: 'exercise_logs',
-            MONEY: 'money_logs',
-            BANK: 'bank_ponds'
+        const SauceAmount = {
+          NONE: 'None',
+          LITTLE: 'Little',
+          MODERATE: 'Moderate',
+          LARGE: 'Large',
         };
 
-        const store = {
-            data: {
-                activeTab: localStorage.getItem(DB_KEYS.TAB) || 'summary',
-                weightLogs: JSON.parse(localStorage.getItem(DB_KEYS.WEIGHT) || '[]'),
-                dietLogs: JSON.parse(localStorage.getItem(DB_KEYS.DIET) || '[]'),
-                exerciseLogs: JSON.parse(localStorage.getItem(DB_KEYS.EXERCISE) || '[]'),
-                transactions: JSON.parse(localStorage.getItem(DB_KEYS.MONEY) || '[]'),
-                ponds: JSON.parse(localStorage.getItem(DB_KEYS.BANK) || '[]')
-            },
-            save(key, value) {
-                this.data[key] = value;
-                localStorage.setItem(DB_KEYS[key.toUpperCase().replace('LOGS', '').replace('PONDS', 'BANK').replace('ACTIVETAB', 'TAB')], typeof value === 'string' ? value : JSON.stringify(value));
-                render();
+        const Currency = {
+          HKD: 'HKD',
+          GBP: 'GBP',
+        };
+
+        const TransactionType = {
+          INCOME: 'Income',
+          EXPENSE: 'Expense',
+        };
+
+        const EXCHANGE_RATE_HKD_TO_GBP = 0.1;
+
+        // --- HOOKS ---
+
+        function useStorage(key, initialValue) {
+          const [storedValue, setStoredValue] = useState(() => {
+            if (typeof window === 'undefined') {
+              return initialValue;
             }
-        };
-
-        // --- 2. HELPERS & CONSTANTS ---
-        const SauceAmount = { NONE: 'None', LITTLE: 'Little', MODERATE: 'Moderate', LARGE: 'Large' };
-        const Currency = { HKD: 'HKD', GBP: 'GBP' };
-        const TransactionType = { INCOME: 'Income', EXPENSE: 'Expense' };
-        const ExpenseCategory = { MEALS: 'Meals', TRANSPORT: 'Transport', ACCOMMODATION: 'Accommodation', TRAVELLING: 'Travelling', LEISURE: 'Leisure', BACK_HOME: 'Back Home' };
-        const IncomeCategory = { POCKET_MONEY: 'Pocket Money', PART_TIME: 'Part Time', INTEREST: 'Interest', OTHER: 'Other' };
-        const EXCHANGE_RATE = 0.1;
-
-        const formatDate = (iso) => new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
-        const formatCurrency = (val) => '£' + val.toFixed(0);
-
-        // --- 3. RENDERERS ---
-
-        const router = {
-            navigate(tab) {
-                store.save('activeTab', tab);
+            try {
+              const item = window.localStorage.getItem(key);
+              return item ? JSON.parse(item) : initialValue;
+            } catch (error) {
+              console.warn(`Error reading localStorage key “${key}”:`, error);
+              return initialValue;
             }
-        };
+          });
 
-        function renderNav() {
-            const tabs = [
-                { id: 'summary', icon: 'home', label: 'Home' },
-                { id: 'weight', icon: 'activity', label: 'Weight' },
-                { id: 'diet', icon: 'apple', label: 'Diet' },
-                { id: 'exercise', icon: 'bar-chart-2', label: 'Exercise' },
-                { id: 'money', icon: 'wallet', label: 'Money' },
-                { id: 'bank', icon: 'landmark', label: 'Bank' },
-            ];
-            
-            const html = tabs.map(tab => `
-                <button onclick="router.navigate('${tab.id}')" class="tab-btn flex flex-col items-center justify-center w-full h-full transition-colors text-slate-400 hover:text-sky-300 ${store.data.activeTab === tab.id ? 'active text-sky-500' : ''}">
-                    <i data-lucide="${tab.icon}" width="20" height="20"></i>
-                    <span class="text-[10px] mt-1 font-medium truncate max-w-full px-1">${tab.label}</span>
-                </button>
-            `).join('');
-            
-            document.getElementById('nav-container').innerHTML = html;
-        }
-
-        function renderAlert() {
-            const el = document.getElementById('alert-banner');
-            if (store.data.weightLogs.length > 0) {
-                const last = new Date(store.data.weightLogs[0].date).getTime();
-                const diff = (Date.now() - last) / (86400000);
-                if (diff > 3) {
-                    el.textContent = "⚠️ It's been over 3 days! Please weigh yourself.";
-                    el.classList.remove('hidden');
-                    return;
+          const setValue = useCallback((value) => {
+            setStoredValue((currentValue) => {
+              try {
+                const valueToStore = value instanceof Function ? value(currentValue) : value;
+                if (typeof window !== 'undefined') {
+                  window.localStorage.setItem(key, JSON.stringify(valueToStore));
                 }
-            }
-            el.classList.add('hidden');
-        }
+                return valueToStore;
+              } catch (error) {
+                console.warn(`Error setting localStorage key “${key}”:`, error);
+                return currentValue;
+              }
+            });
+          }, [key]);
 
-        // --- VIEW: SUMMARY ---
-        function getSummaryHTML() {
-            const currentMonth = new Date().getMonth();
-            
-            // Calc stats
-            const mins = store.data.exerciseLogs
-                .filter(l => new Date(l.date).getMonth() === currentMonth)
-                .reduce((a, b) => a + b.durationMinutes, 0);
-
-            const healthy = store.data.dietLogs
-                .filter(l => new Date(l.date).getMonth() === currentMonth)
-                .filter(l => l.vegetableBowls >= 1 && (l.sauce === 'None' || l.sauce === 'Little') && !l.hasColdDrink && !l.hasSugarDrink)
-                .length;
-            
-            const totalDiet = store.data.dietLogs.filter(l => new Date(l.date).getMonth() === currentMonth).length;
-
-            const money = store.data.transactions.filter(l => new Date(l.date).getMonth() === currentMonth);
-            const inc = money.filter(t => t.type === 'Income').reduce((a, b) => a + b.amount, 0);
-            const exp = money.filter(t => t.type === 'Expense').reduce((a, b) => a + b.amount, 0);
-
-            const weight = store.data.weightLogs.length ? store.data.weightLogs[0].weight : 'N/A';
-
-            return `
-                <div class="space-y-4">
-                    <div class="bg-gradient-to-br from-pink-400 to-pink-500 rounded-2xl p-6 text-white shadow-lg shadow-pink-200">
-                        <h2 class="text-2xl font-bold mb-1">Hello, Fat Boy!</h2>
-                        <p class="opacity-90">Keep pushing your limits this month.</p>
-                    </div>
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                            <p class="text-slate-400 text-xs font-bold uppercase">Weight</p>
-                            <p class="text-2xl font-bold text-slate-700">${weight} <span class="text-sm">kg</span></p>
-                        </div>
-                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                            <p class="text-slate-400 text-xs font-bold uppercase">Active Mins</p>
-                            <p class="text-2xl font-bold text-sky-500">${mins}</p>
-                        </div>
-                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                            <p class="text-slate-400 text-xs font-bold uppercase">Healthy Meals</p>
-                            <p class="text-2xl font-bold text-green-500">${healthy} <span class="text-sm text-slate-400">/ ${totalDiet}</span></p>
-                        </div>
-                        <div class="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
-                            <p class="text-slate-400 text-xs font-bold uppercase">Savings</p>
-                            <p class="text-2xl font-bold text-indigo-500">£${(inc - exp).toFixed(0)}</p>
-                        </div>
-                    </div>
-                    <div class="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
-                        <h3 class="font-bold text-slate-700 mb-2">Mom's Message</h3>
-                        <p class="text-slate-500 italic text-sm">"Remember to eat more vegetables and save money for your future! Love you!"</p>
-                    </div>
-                </div>
-            `;
-        }
-
-        // --- VIEW: WEIGHT ---
-        function renderWeightChart(logs) {
-            if (!logs.length) return '';
-            const data = [...logs].sort((a,b) => new Date(a.date) - new Date(b.date)).slice(-10);
-            const max = Math.max(...data.map(d => d.weight)) + 2;
-            const min = Math.min(...data.map(d => d.weight)) - 2;
-            const range = max - min;
-            const width = 300; 
-            const height = 150;
-            
-            const points = data.map((d, i) => {
-                const x = (i / (data.length - 1 || 1)) * width;
-                const y = height - ((d.weight - min) / range) * height;
-                return `${x},${y}`;
-            }).join(' ');
-
-            return `
-                <svg width="100%" height="100%" viewBox="0 0 ${width} ${height}" overflow="visible">
-                    <defs>
-                        <linearGradient id="grad" x1="0%" y1="0%" x2="0%" y2="100%">
-                            <stop offset="0%" style="stop-color:#f472b6;stop-opacity:0.2" />
-                            <stop offset="100%" style="stop-color:#f472b6;stop-opacity:0" />
-                        </linearGradient>
-                    </defs>
-                    <path d="M0,${height} ${points} ${width},${height}" fill="url(#grad)" stroke="none" />
-                    <polyline fill="none" stroke="#f472b6" stroke-width="3" points="${points}" />
-                    ${data.map((d, i) => {
-                        const x = (i / (data.length - 1 || 1)) * width;
-                        const y = height - ((d.weight - min) / range) * height;
-                        return `<circle cx="${x}" cy="${y}" r="4" fill="#f472b6" />`;
-                    }).join('')}
-                </svg>
-            `;
-        }
-
-        function getWeightHTML() {
-            const logs = store.data.weightLogs.sort((a,b) => new Date(b.date) - new Date(a.date));
-            const chartSVG = renderWeightChart(logs);
-
-            return `
-                <div class="space-y-6">
-                    <div class="bg-white rounded-2xl p-6 shadow-sm border border-pink-100">
-                        <h2 class="text-lg font-bold text-slate-700 mb-4">Record Weight</h2>
-                        <form onsubmit="handleWeightSubmit(event)" class="flex gap-3">
-                            <div class="relative flex-1">
-                                <input name="weight" type="number" step="0.1" min="0" placeholder="0.0" class="w-full pl-4 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-300" required />
-                                <span class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">kg</span>
-                            </div>
-                            <button type="submit" class="bg-pink-400 hover:bg-pink-500 text-white p-3 rounded-xl shadow-lg shadow-pink-200"><i data-lucide="plus"></i></button>
-                        </form>
-                    </div>
-
-                    ${logs.length ? `
-                    <div class="bg-white rounded-2xl p-6 shadow-sm border border-sky-100">
-                         <h3 class="text-md font-semibold text-slate-600 mb-4">Progress</h3>
-                         <div class="h-48 w-full p-2">${chartSVG}</div>
-                    </div>` : ''}
-
-                    <div class="space-y-3">
-                        <h3 class="text-sm font-semibold text-slate-500 uppercase tracking-wider ml-1">History</h3>
-                        ${logs.map(l => `
-                            <div class="bg-white p-4 rounded-xl shadow-sm flex justify-between items-center border border-slate-50">
-                                <div>
-                                    <p class="text-lg font-bold text-slate-700">${l.weight} <span class="text-sm font-normal text-slate-400">kg</span></p>
-                                    <p class="text-xs text-slate-400">${new Date(l.date).toLocaleString()}</p>
-                                </div>
-                                <button onclick="deleteLog('weightLogs', '${l.id}')" class="text-slate-300 hover:text-red-400"><i data-lucide="trash-2" width="18"></i></button>
-                            </div>
-                        `).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        function handleWeightSubmit(e) {
-            e.preventDefault();
-            const val = parseFloat(e.target.weight.value);
-            if(!val) return;
-            store.save('weightLogs', [{ id: Date.now().toString(), date: new Date().toISOString(), weight: val }, ...store.data.weightLogs]);
-        }
-
-        // --- VIEW: DIET ---
-        function getDietHTML() {
-            const logs = store.data.dietLogs.sort((a,b) => new Date(b.date) - new Date(a.date));
-            return `
-                <div class="space-y-6">
-                    <div class="bg-white rounded-2xl p-6 shadow-sm border border-sky-100">
-                        <h2 class="text-lg font-bold text-slate-700 mb-4">Log Meal</h2>
-                        <form onsubmit="handleDietSubmit(event)" class="space-y-5">
-                            <div class="space-y-2">
-                                <label class="text-sm font-medium text-slate-600">Vegetable Bowls</label>
-                                <div class="flex gap-2">
-                                    ${[0, 0.5, 0.75, 1, 2].map(n => `<label class="flex-1 cursor-pointer"><input type="radio" name="veg" value="${n}" class="peer hidden" ${n===1?'checked':''}> <div class="py-2 text-center rounded-lg bg-slate-50 peer-checked:bg-sky-400 peer-checked:text-white text-sm font-bold transition-all">${n}</div></label>`).join('')}
-                                </div>
-                            </div>
-                            <div class="space-y-2">
-                                <label class="text-sm font-medium text-slate-600">Sauce Amount</label>
-                                <div class="grid grid-cols-2 gap-2">
-                                    ${Object.values(SauceAmount).map(s => `<label class="cursor-pointer"><input type="radio" name="sauce" value="${s}" class="peer hidden" ${s==='Moderate'?'checked':''}> <div class="py-2 text-center rounded-lg bg-slate-50 peer-checked:bg-pink-400 peer-checked:text-white text-sm font-medium transition-all">${s}</div></label>`).join('')}
-                                </div>
-                            </div>
-                            <div class="grid grid-cols-2 gap-4">
-                                <label class="cursor-pointer"><input type="checkbox" name="cold" class="peer hidden"> <div class="p-3 rounded-xl border-2 border-slate-100 peer-checked:border-sky-400 peer-checked:bg-sky-50 peer-checked:text-sky-600 text-slate-400 text-center font-bold transition-all">Cold Drink</div></label>
-                                <label class="cursor-pointer"><input type="checkbox" name="sugar" class="peer hidden"> <div class="p-3 rounded-xl border-2 border-slate-100 peer-checked:border-pink-400 peer-checked:bg-pink-50 peer-checked:text-pink-600 text-slate-400 text-center font-bold transition-all">Sugar Drink</div></label>
-                            </div>
-                            <button type="submit" class="w-full bg-slate-800 text-white py-3 rounded-xl font-semibold shadow-lg">Save Meal</button>
-                        </form>
-                    </div>
-                    <div class="space-y-3">
-                        ${logs.map(l => {
-                            let score = 0;
-                            if(l.vegetableBowls >=1) score++;
-                            if(l.sauce === 'None' || l.sauce === 'Little') score++;
-                            if(!l.hasColdDrink) score++;
-                            if(!l.hasSugarDrink) score++;
-                            const color = score === 4 ? 'bg-green-100 border-green-200' : score >= 2 ? 'bg-yellow-50 border-yellow-100' : 'bg-red-50 border-red-100';
-                            return `
-                                <div class="p-4 rounded-xl shadow-sm border ${color} flex justify-between items-start">
-                                    <div class="space-y-1">
-                                        <p class="text-xs text-slate-400">${new Date(l.date).toLocaleString()}</p>
-                                        <div class="flex flex-wrap gap-2 text-sm text-slate-700">
-                                            <span class="font-medium bg-white/50 px-2 py-0.5 rounded">🥗 ${l.vegetableBowls} bowls</span>
-                                            <span class="font-medium bg-white/50 px-2 py-0.5 rounded">🧂 ${l.sauce}</span>
-                                        </div>
-                                        <div class="flex gap-2 mt-1">
-                                            ${l.hasColdDrink ? '<span class="text-xs bg-sky-100 text-sky-600 px-2 py-0.5 rounded-full">Cold Drink</span>' : ''}
-                                            ${l.hasSugarDrink ? '<span class="text-xs bg-pink-100 text-pink-600 px-2 py-0.5 rounded-full">Sugar Drink</span>' : ''}
-                                            ${!l.hasColdDrink && !l.hasSugarDrink ? '<span class="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">Healthy Drink Choice</span>' : ''}
-                                        </div>
-                                    </div>
-                                    <button onclick="deleteLog('dietLogs', '${l.id}')" class="text-slate-300 hover:text-slate-500"><i data-lucide="trash-2" width="16"></i></button>
-                                </div>
-                            `;
-                        }).join('')}
-                    </div>
-                </div>
-            `;
-        }
-
-        function handleDietSubmit(e) {
-            e.preventDefault();
-            const form = e.target;
-            const log = {
-                id: Date.now().toString(),
-                date: new Date().toISOString(),
-                vegetableBowls: parseFloat(form.veg.value),
-                sauce: form.sauce.value,
-                hasColdDrink: form.cold.checked,
-                hasSugarDrink: form.sugar.checked
+          useEffect(() => {
+            const handleStorageChange = (e) => {
+              if (e.key === key && e.newValue !== null) {
+                try {
+                  setStoredValue(JSON.parse(e.newValue));
+                } catch (error) {
+                  console.warn(`Error parsing storage change for key “${key}”:`, error);
+                }
+              }
             };
-            store.save('dietLogs', [log, ...store.data.dietLogs]);
+
+            window.addEventListener('storage', handleStorageChange);
+            return () => window.removeEventListener('storage', handleStorageChange);
+          }, [key]);
+
+          return [storedValue, setValue];
         }
 
-        // --- VIEW: EXERCISE ---
-        function getExerciseHTML() {
-            const logs = store.data.exerciseLogs;
-            const totalMins = logs.reduce((a,b)=>a+b.durationMinutes,0);
-            
-            return `
-                <div class="space-y-6">
-                    <div class="grid grid-cols-2 gap-4">
-                        <div class="bg-sky-500 text-white p-4 rounded-2xl shadow-lg shadow-sky-200">
-                            <p class="text-sky-100 text-xs font-medium uppercase">Total Time</p>
-                            <p class="text-3xl font-bold mt-1">${totalMins}<span class="text-sm font-normal text-sky-200 ml-1">mins</span></p>
-                        </div>
-                        <div class="bg-pink-500 text-white p-4 rounded-2xl shadow-lg shadow-pink-200">
-                            <p class="text-pink-100 text-xs font-medium uppercase">Sessions</p>
-                            <p class="text-3xl font-bold mt-1">${logs.length}<span class="text-sm font-normal text-pink-200 ml-1">count</span></p>
-                        </div>
-                    </div>
-                    <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
-                        <h2 class="text-lg font-bold text-slate-700 mb-4">Log Workout</h2>
-                        <form onsubmit="handleExerciseSubmit(event)" class="space-y-5">
-                            <div class="space-y-2">
-                                <label class="text-sm font-medium text-slate-600">Activity</label>
-                                <div class="flex flex-wrap gap-2">
-                                    ${['Running', 'Gym', 'Ball Games', 'Swimming', 'Cycling', 'Yoga'].map(t => `<label><input type="radio" name="type" value="${t}" class="peer hidden" ${t==='Gym'?'checked':''}> <div class="px-3 py-1.5 rounded-full text-xs font-semibold border border-slate-200 text-slate-500 peer-checked:bg-slate-800 peer-checked:text-white peer-checked:border-slate-800 transition-all">${t}</div></label>`).join('')}
-                                </div>
-                            </div>
-                            <div class="space-y-2">
-                                <label class="text-sm font-medium text-slate-600">Intensity</label>
-                                <div class="flex bg-slate-100 p-1 rounded-xl">
-                                    ${['Low', 'Medium', 'High'].map(l => `<label class="flex-1"><input type="radio" name="intensity" value="${l}" class="peer hidden" ${l==='Medium'?'checked':''}> <div class="py-2 text-center rounded-lg text-sm font-bold text-slate-400 peer-checked:bg-${l==='High'?'red':l==='Medium'?'orange':'green'}-400 peer-checked:text-white transition-all">${l}</div></label>`).join('')}
-                                </div>
-                            </div>
-                            <div class="space-y-2">
-                                <label class="text-sm font-medium text-slate-600">Duration (mins)</label>
-                                <input name="duration" type="number" value="30" class="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-300" required />
-                            </div>
-                            <button type="submit" class="w-full bg-gradient-to-r from-sky-400 to-pink-400 text-white py-3 rounded-xl font-bold shadow-lg shadow-pink-100">Log Session</button>
-                        </form>
-                    </div>
-                    <div class="space-y-3">
-                        ${logs.map(l => `
-                            <div class="bg-white p-4 rounded-xl shadow-sm flex justify-between items-center border-l-4 border-l-sky-400">
-                                <div>
-                                    <div class="flex items-center gap-2">
-                                        <span class="font-bold text-slate-700">${l.type}</span>
-                                        <span class="text-[10px] px-2 py-0.5 rounded-full text-white ${l.intensity === 'High' ? 'bg-red-400' : l.intensity === 'Medium' ? 'bg-orange-400' : 'bg-green-400'}">${l.intensity}</span>
-                                    </div>
-                                    <p class="text-sm text-slate-500 mt-1">${l.durationMinutes} mins • ${new Date(l.date).toLocaleDateString()}</p>
-                                </div>
-                                <button onclick="deleteLog('exerciseLogs', '${l.id}')" class="text-slate-300 hover:text-red-400"><i data-lucide="trash-2" width="18"></i></button>
-                            </div>
-                        `).join('')}
-                    </div>
+        // --- COMPONENTS ---
+
+        const Layout = ({ children, activeTab, onTabChange, alert }) => {
+          const tabs = [
+            { id: 'summary', icon: Home, label: 'Home' },
+            { id: 'weight', icon: Activity, label: 'Weight' },
+            { id: 'diet', icon: Apple, label: 'Diet' },
+            { id: 'exercise', icon: BarChart2, label: 'Exercise' },
+            { id: 'money', icon: Wallet, label: 'Money' },
+            { id: 'bank', icon: Landmark, label: 'Bank' },
+          ];
+
+          return (
+            <div className="flex flex-col min-h-screen bg-slate-50 text-slate-800">
+              <header className="sticky top-0 z-50 bg-white/80 backdrop-blur-md border-b border-pink-100 shadow-sm">
+                <div className="max-w-md mx-auto px-4 py-4 flex justify-between items-center">
+                  <button 
+                    onClick={() => onTabChange('summary')}
+                    className="text-xl font-bold bg-gradient-to-r from-pink-400 to-sky-400 bg-clip-text text-transparent hover:opacity-80 transition-opacity focus:outline-none"
+                  >
+                    LifeTracker
+                  </button>
+                  <button 
+                    onClick={() => onTabChange('summary')}
+                    className="w-8 h-8 rounded-full bg-gradient-to-br from-pink-200 to-sky-200 flex items-center justify-center text-xs font-bold text-white shadow-inner hover:scale-105 transition-transform focus:outline-none"
+                  >
+                    FB
+                  </button>
                 </div>
-            `;
-        }
+                {alert && (
+                  <div className="bg-red-500 text-white px-4 py-2 text-sm text-center animate-pulse">
+                    {alert}
+                  </div>
+                )}
+              </header>
 
-        function handleExerciseSubmit(e) {
-            e.preventDefault();
-            const form = e.target;
-            store.save('exerciseLogs', [{
-                id: Date.now().toString(),
-                date: new Date().toISOString(),
-                type: form.type.value,
-                intensity: form.intensity.value,
-                durationMinutes: parseInt(form.duration.value)
-            }, ...store.data.exerciseLogs]);
-        }
+              <main className="flex-1 w-full max-w-md mx-auto p-4 pb-24">
+                {children}
+              </main>
 
-        // --- VIEW: MONEY ---
-        let moneyViewMode = 'month'; // 'month' or 'year'
-        let moneyViewDate = new Date();
-        let moneyTab = 'log'; // 'log' or 'vis'
-        let moneyTransType = 'Expense'; // 'Expense' or 'Income'
-        let moneyCategory = 'Meals';
+              <nav className="fixed bottom-0 left-0 right-0 bg-white border-t border-sky-100 pb-safe z-40">
+                <div className="max-w-md mx-auto flex justify-around items-center h-16 px-1">
+                  {tabs.map((tab) => (
+                    <button
+                      key={tab.id}
+                      onClick={() => onTabChange(tab.id)}
+                      className={`flex flex-col items-center justify-center w-full h-full transition-colors ${
+                        activeTab === tab.id
+                          ? 'text-sky-500'
+                          : 'text-slate-400 hover:text-sky-300'
+                      }`}
+                    >
+                      <tab.icon size={20} strokeWidth={activeTab === tab.id ? 2.5 : 2} />
+                      <span className="text-[10px] mt-1 font-medium truncate max-w-full px-1">{tab.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </nav>
+            </div>
+          );
+        };
 
-        function getMoneyHTML() {
-            // Filter
-            const filtered = store.data.transactions.filter(t => {
-                const d = new Date(t.date);
-                if (moneyViewMode === 'month') return d.getMonth() === moneyViewDate.getMonth() && d.getFullYear() === moneyViewDate.getFullYear();
-                return d.getFullYear() === moneyViewDate.getFullYear();
+        const MoneyVisualization = ({ transactions, currentMonth, currentYear, viewMode, expenseCategories }) => {
+          const canvasRef = useRef(null);
+
+          // Color Palettes
+          const vaseColors = {
+              green: { outline: '#14532d', body: '#dcfce7', dot: '#86efac', inside: '#4ade80', text: '#166534' },
+              yellow: { outline: '#713f12', body: '#fef9c3', dot: '#fde047', inside: '#facc15', text: '#854d0e' },
+              red: { outline: '#7f1d1d', body: '#fee2e2', dot: '#fca5a5', inside: '#f87171', text: '#991b1b' }
+          };
+
+          const getVaseColor = (amount, warning, danger) => {
+              if (amount >= danger) return vaseColors.red;
+              if (amount >= warning) return vaseColors.yellow;
+              return vaseColors.green;
+          };
+
+          useEffect(() => {
+            const canvas = canvasRef.current;
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+            if (!ctx) return;
+
+            // Filter transactions
+            const filteredTransactions = transactions.filter(t => {
+              const d = new Date(t.date);
+              if (viewMode === 'month') {
+                return d.getMonth() === currentMonth && d.getFullYear() === currentYear;
+              } else {
+                return d.getFullYear() === currentYear;
+              }
             });
 
-            const income = filtered.filter(t => t.type === 'Income').reduce((s,t) => s+t.amount, 0);
-            const expense = filtered.filter(t => t.type === 'Expense').reduce((s,t) => s+t.amount, 0);
-            const balance = income - expense;
+            let totalIncome = 0;
+            const expensesByCategory = {};
+            // Initialize with custom categories
+            expenseCategories.forEach(c => expensesByCategory[c.name] = 0);
 
-            const cats = moneyTransType === 'Income' ? IncomeCategory : ExpenseCategory;
+            filteredTransactions.forEach(t => {
+               const amountGBP = t.originalCurrency === 'HKD' ? t.originalAmount * 0.1 : t.originalAmount; 
+               if (t.type === TransactionType.INCOME) {
+                   totalIncome += amountGBP;
+               } else {
+                   // Handle if category was deleted or renamed (fallback bucket?)
+                   // For now, only sum if category exists, or create on fly? 
+                   // Better to only sum known. If category missing from config, it might be hidden, 
+                   // but let's initialize if it exists in transaction history
+                   if (expensesByCategory[t.category] === undefined) {
+                      expensesByCategory[t.category] = 0;
+                   }
+                   expensesByCategory[t.category] += amountGBP;
+               }
+            });
 
-            return `
-                <div class="space-y-6">
-                    <div class="flex flex-col gap-3">
-                         <div class="flex justify-end">
-                            <div class="bg-slate-100 p-1 rounded-lg flex text-xs font-medium">
-                                <button onclick="setMoneyViewMode('month')" class="px-3 py-1 rounded-md transition-all ${moneyViewMode === 'month' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}">Monthly</button>
-                                <button onclick="setMoneyViewMode('year')" class="px-3 py-1 rounded-md transition-all ${moneyViewMode === 'year' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}">Yearly</button>
-                            </div>
-                        </div>
-                        <div class="flex justify-between items-center bg-white p-2 rounded-xl shadow-sm border border-slate-100">
-                            <button onclick="changeMoneyDate(-1)" class="p-2 hover:bg-slate-100 rounded-lg">←</button>
-                            <span class="font-bold text-slate-700">${moneyViewMode === 'month' ? moneyViewDate.toLocaleString('default', {month:'long', year:'numeric'}) : moneyViewDate.getFullYear()}</span>
-                            <button onclick="changeMoneyDate(1)" class="p-2 hover:bg-slate-100 rounded-lg">→</button>
-                        </div>
-                    </div>
-                    
-                    <div class="flex bg-slate-200 p-1 rounded-xl">
-                         <button onclick="setMoneyTab('log')" class="flex-1 py-2 rounded-lg text-sm font-bold transition-all ${moneyTab === 'log' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}">Transactions</button>
-                         <button onclick="setMoneyTab('vis')" class="flex-1 py-2 rounded-lg text-sm font-bold transition-all ${moneyTab === 'vis' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}">Visualization</button>
-                    </div>
+            const totalExpense = Object.values(expensesByCategory).reduce((a, b) => a + b, 0);
 
-                    ${moneyTab === 'log' ? `
-                        <div class="grid grid-cols-3 gap-2">
-                             <div class="bg-green-100 p-3 rounded-xl border border-green-200"><p class="text-green-600 text-[10px] font-bold uppercase">In</p><p class="text-green-800 font-bold text-lg">£${income.toFixed(0)}</p></div>
-                             <div class="bg-red-100 p-3 rounded-xl border border-red-200"><p class="text-red-600 text-[10px] font-bold uppercase">Out</p><p class="text-red-800 font-bold text-lg">£${expense.toFixed(0)}</p></div>
-                             <div class="bg-slate-100 p-3 rounded-xl border border-slate-200"><p class="text-slate-600 text-[10px] font-bold uppercase">Net</p><p class="font-bold text-lg ${balance>=0?'text-slate-800':'text-red-500'}">£${balance.toFixed(0)}</p></div>
-                        </div>
-
-                        <div class="bg-white rounded-2xl p-6 shadow-sm border border-pink-100">
-                            <div class="flex gap-2 mb-4">
-                                <button onclick="setMoneyType('Expense')" class="flex-1 py-2 rounded-lg font-bold text-sm ${moneyTransType==='Expense'?'bg-pink-400 text-white':'bg-slate-100 text-slate-400'}">Expense</button>
-                                <button onclick="setMoneyType('Income')" class="flex-1 py-2 rounded-lg font-bold text-sm ${moneyTransType==='Income'?'bg-green-400 text-white':'bg-slate-100 text-slate-400'}">Income</button>
-                            </div>
-                            <form onsubmit="handleMoneySubmit(event)" class="space-y-4">
-                                <div class="flex gap-2">
-                                     <div class="relative flex-1">
-                                        <input name="amount" type="number" step="0.01" placeholder="0.00" class="w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-300" required />
-                                        <span class="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" id="curr-symbol">£</span>
-                                     </div>
-                                     <select name="currency" onchange="document.getElementById('curr-symbol').textContent = this.value === 'GBP' ? '£' : '$'" class="bg-slate-100 rounded-xl px-3 font-medium text-slate-600 focus:outline-none">
-                                        <option value="GBP">GBP</option>
-                                        <option value="HKD">HKD</option>
-                                     </select>
-                                </div>
-                                <div class="grid grid-cols-2 gap-2">
-                                    ${Object.values(cats).map(c => `<button type="button" onclick="setMoneyCat('${c}')" class="p-2 text-xs rounded-lg border transition-all truncate ${moneyCategory === c ? 'bg-slate-800 text-white border-slate-800' : 'border-slate-200 text-slate-500'}">${c}</button>`).join('')}
-                                </div>
-                                <button type="submit" class="w-full bg-slate-900 text-white py-3 rounded-xl font-bold shadow-lg">Add ${moneyTransType}</button>
-                            </form>
-                        </div>
-
-                        <div class="space-y-2">
-                            ${filtered.map(t => `
-                                <div class="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-50 shadow-sm">
-                                    <div class="flex items-center gap-3">
-                                        <div class="p-2 rounded-full ${t.type === 'Income' ? 'bg-green-100 text-green-600' : 'bg-pink-100 text-pink-600'}">
-                                            <i data-lucide="${t.type === 'Income' ? 'coins' : 'pound-sterling'}" width="16"></i>
-                                        </div>
-                                        <div>
-                                            <p class="font-semibold text-slate-700 text-sm">${t.category}</p>
-                                            <p class="text-xs text-slate-400">${new Date(t.date).toLocaleDateString()}</p>
-                                        </div>
-                                    </div>
-                                    <div class="flex items-center gap-3 text-right">
-                                        <div>
-                                            <p class="font-bold ${t.type === 'Income' ? 'text-green-600' : 'text-slate-800'}">${t.type==='Income'?'+':'-'} ${t.originalCurrency === 'GBP' ? '£' : 'HK$'}${t.originalAmount}</p>
-                                            ${t.originalCurrency === 'HKD' ? `<p class="text-[10px] text-slate-400">≈ £${t.amount.toFixed(2)}</p>` : ''}
-                                        </div>
-                                        <button onclick="deleteLog('transactions', '${t.id}')" class="text-slate-300 hover:text-red-400 p-2"><i data-lucide="trash-2" width="16"></i></button>
-                                    </div>
-                                </div>
-                            `).join('')}
-                        </div>
-                    ` : `
-                        <div class="w-full bg-white rounded-3xl overflow-hidden shadow-xl shadow-sky-100 border border-slate-100 mt-4">
-                            <div class="bg-white px-6 py-4 border-b border-slate-50 flex justify-between items-center">
-                                <div class="flex items-center gap-2">
-                                    <div class="p-1.5 bg-green-100 rounded-lg"><div class="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div></div>
-                                    <div><h3 class="text-slate-700 text-xs font-bold uppercase tracking-wider">Cash Flow</h3><p class="text-[10px] text-slate-400">Income (Water) → Expenses (Vases)</p></div>
-                                </div>
-                            </div>
-                            <div class="relative bg-white"><canvas id="moneyCanvas" class="w-full h-[400px] block"></canvas></div>
-                        </div>
-                    `}
-                </div>
-            `;
-        }
-
-        // Money State Setters
-        window.setMoneyViewMode = (m) => { moneyViewMode = m; render(); };
-        window.changeMoneyDate = (d) => { 
-            if(moneyViewMode==='month') moneyViewDate.setMonth(moneyViewDate.getMonth()+d); 
-            else moneyViewDate.setFullYear(moneyViewDate.getFullYear()+d);
-            render(); 
-        };
-        window.setMoneyTab = (t) => { moneyTab = t; render(); if(t === 'vis') setTimeout(initCanvas, 50); };
-        window.setMoneyType = (t) => { 
-            moneyTransType = t; 
-            moneyCategory = t === 'Income' ? IncomeCategory.POCKET_MONEY : ExpenseCategory.MEALS; 
-            render(); 
-        };
-        window.setMoneyCat = (c) => { moneyCategory = c; render(); };
-        window.handleMoneySubmit = (e) => {
-            e.preventDefault();
-            const form = e.target;
-            const val = parseFloat(form.amount.value);
-            const curr = form.currency.value;
-            store.save('transactions', [{
-                id: Date.now().toString(),
-                date: new Date().toISOString(),
-                type: moneyTransType,
-                originalAmount: val,
-                originalCurrency: curr,
-                amount: curr === 'HKD' ? val * EXCHANGE_RATE : val,
-                category: moneyCategory
-            }, ...store.data.transactions]);
-        };
-
-        // --- CANVAS LOGIC ---
-        let animationId;
-        function initCanvas() {
-            const canvas = document.getElementById('moneyCanvas');
-            if(!canvas) return;
-            const ctx = canvas.getContext('2d');
+            // Setup Canvas
             const width = canvas.width = canvas.offsetWidth;
             const height = canvas.height = 400;
 
-            const transactions = store.data.transactions.filter(t => {
-                const d = new Date(t.date);
-                if (moneyViewMode === 'month') return d.getMonth() === moneyViewDate.getMonth() && d.getFullYear() === moneyViewDate.getFullYear();
-                return d.getFullYear() === moneyViewDate.getFullYear();
+            // Use dynamic categories that have > 0 expense OR are in the list
+            // We'll use the provided expenseCategories list for ordering and config
+            const activeCats = expenseCategories.map(c => c.name);
+            // Also include any categories found in transactions that aren't in config (legacy data)
+            Object.keys(expensesByCategory).forEach(c => {
+               if (!activeCats.includes(c)) activeCats.push(c);
             });
 
-            const expenses = {};
-            Object.values(ExpenseCategory).forEach(c => expenses[c] = 0);
-            let income = 0;
-            transactions.forEach(t => {
-                if(t.type === 'Income') income += t.amount;
-                else if (expenses[t.category] !== undefined) expenses[t.category] += t.amount;
-            });
-            const totalExp = Object.values(expenses).reduce((a,b)=>a+b, 0);
-
-            // Logic Update:
-            // 1. Droplets = Income
-            // 2. Vase Size = Expense Amount
-            // 3. Simulation:
-            //    If Income < Expense: Vases fill proportionally (partially).
-            //    If Income > Expense: Vases fill completely, overflow to floor.
-
-            const PARTICLE_VAL = Math.max(income, totalExp) > 10000 ? 50 : Math.max(income, totalExp) > 5000 ? 20 : 5;
+            const VASES = activeCats;
+            const PADDING = 15;
+            const TOTAL_WIDTH = width - (PADDING * 2);
+            const VASE_SLOT_WIDTH = TOTAL_WIDTH / Math.max(1, VASES.length);
             
-            // Total Particles representing Income
-            const totalIncomeParticles = Math.floor(income / PARTICLE_VAL);
+            // Determine Scale for Droplets
+            const maxVal = Math.max(totalIncome, totalExpense);
+            let DYNAMIC_DROPLET_VALUE = 1;
+            if (maxVal > 20000) DYNAMIC_DROPLET_VALUE = 50;
+            else if (maxVal > 10000) DYNAMIC_DROPLET_VALUE = 20;
+            else if (maxVal > 5000) DYNAMIC_DROPLET_VALUE = 10;
+            else if (maxVal > 1000) DYNAMIC_DROPLET_VALUE = 5;
+            else DYNAMIC_DROPLET_VALUE = 1;
+
+            // Physics Constants
+            const PARTICLE_RADIUS = 2.5;
+            const PACKING_SPACING = PARTICLE_RADIUS * 2;
+            const TAP_X = width / 2;
+            const TAP_Y = 40;
+            const DROPLET_COLOR = '#3b82f6';
             
-            // Calculate Vase Capacities (in particles)
+            let particles = [];
+
+            // --- LOGIC: Distribute Income into Vases ---
+            
+            const maxCategoryExpense = Math.max(...Object.values(expensesByCategory));
             const vaseConfig = {};
-            const vases = Object.values(ExpenseCategory);
-            const slotW = (width - 30) / vases.length;
+            
+            VASES.forEach((cat, i) => {
+                const expense = expensesByCategory[cat] || 0;
+                let h = 0;
+                if (maxCategoryExpense > 0 && expense > 0) {
+                     h = 40 + ((expense / maxCategoryExpense) * 140);
+                } else if (expense === 0) {
+                     h = 0; 
+                }
 
-            const maxExp = Math.max(1, Math.max(...Object.values(expenses)));
+                const w = Math.min(60, VASE_SLOT_WIDTH * 0.85); // Cap max width for aesthetics
+                const x = PADDING + (i * VASE_SLOT_WIDTH) + (VASE_SLOT_WIDTH - w)/2;
+                const y = height - 30; 
 
-            vases.forEach((v, i) => {
-                const amt = expenses[v];
-                // Vase physical height depends on expense amount relative to max
-                // But visual fill depends on income vs expense
-                const h = amt > 0 ? 40 + ((amt / maxExp) * 140) : 0;
+                const capacityDroplets = Math.ceil(expense / DYNAMIC_DROPLET_VALUE);
                 
-                // Capacity in particles
-                const capacity = Math.ceil(amt / PARTICLE_VAL);
+                // Find thresholds
+                const catConfig = expenseCategories.find(c => c.name === cat);
+                const warning = catConfig ? catConfig.warning : 1000;
+                const danger = catConfig ? catConfig.danger : 2000;
+                const colorTheme = getVaseColor(expense, warning, danger);
 
-                const vaseW = slotW * 0.85;
-                const x = 15 + (i * slotW) + (slotW - vaseW)/2;
-                
-                vaseConfig[v] = { x, y: height - 30, w: vaseW, h, capacity, fillCount: 0 };
+                vaseConfig[cat] = {
+                    x, y, w, h,
+                    capacityDroplets,
+                    fillDroplets: 0,
+                    colorTheme
+                };
             });
 
-            // Distribute Particles
-            let overflowParticles = 0;
-            
-            if (income >= totalExp) {
-                // Fill all vases to capacity
-                vases.forEach(v => {
-                    vaseConfig[v].fillCount = vaseConfig[v].capacity;
-                });
-                // Remainder is overflow
-                overflowParticles = totalIncomeParticles - Object.values(vaseConfig).reduce((acc, val) => acc + val.capacity, 0);
-            } else {
-                // Distribute proportional to capacity
-                // If I have 50% income coverage, all vases are 50% full
-                const ratio = totalExp > 0 ? income / totalExp : 0;
-                vases.forEach(v => {
-                    vaseConfig[v].fillCount = Math.floor(vaseConfig[v].capacity * ratio);
-                });
-            }
+            const fillRatio = totalExpense > 0 ? Math.min(1.0, totalIncome / totalExpense) : 1.0;
+            let allocatedDroplets = 0;
 
-            const particles = [];
-            const TAP_X = width/2;
-            const TAP_Y = 50;
+            VASES.forEach(cat => {
+                const config = vaseConfig[cat];
+                if (config.capacityDroplets > 0) {
+                    const allocate = Math.floor(config.capacityDroplets * fillRatio);
+                    config.fillDroplets = allocate;
+                    allocatedDroplets += allocate;
+                }
+            });
 
-            // Generate Vase Particles
-            vases.forEach((v, i) => {
-                const config = vaseConfig[v];
-                if(config.h === 0 || config.fillCount <= 0) return;
-                
-                // Pack them
-                const packSpacing = 6;
-                const itemsPerRow = Math.max(1, Math.floor((config.w * 0.8) / packSpacing));
+            const totalIncomeDroplets = Math.floor(totalIncome / DYNAMIC_DROPLET_VALUE);
+            const overflowDroplets = Math.max(0, totalIncomeDroplets - allocatedDroplets);
+
+            // Generate Particles
+            VASES.forEach((cat, i) => {
+                const config = vaseConfig[cat];
+                if (config.h === 0 || config.fillDroplets === 0) return;
+
+                const count = config.fillDroplets;
+                const safeCount = Math.min(count, 800); 
+
+                const vaseInnerWidth = config.w * 0.8; 
+                const itemsPerRow = Math.max(1, Math.floor(vaseInnerWidth / PACKING_SPACING));
                 const centerX = config.x + config.w/2;
-                
-                for(let j=0; j<config.fillCount; j++) {
-                    if(j > 500) break; // limit visual
+                const bottomY = config.y - 5; 
+                const topRimY = config.y - config.h;
+
+                for (let j = 0; j < safeCount; j++) {
                     const row = Math.floor(j / itemsPerRow);
                     const col = j % itemsPerRow;
-                    const rowW = (Math.min(config.fillCount - row*itemsPerRow, itemsPerRow) - 1) * packSpacing;
                     
-                    const tx = centerX - (rowW/2) + (col * packSpacing);
-                    const ty = config.y - 5 - (row * packSpacing);
+                    const itemsInThisRow = Math.min(safeCount - row * itemsPerRow, itemsPerRow);
+                    const rowWidth = (itemsInThisRow - 1) * PACKING_SPACING;
+                    const xStart = centerX - (rowWidth / 2);
                     
-                    // Don't go above rim
-                    if(ty < config.y - config.h) break;
-
+                    const finalX = xStart + (col * PACKING_SPACING);
+                    const finalY = bottomY - (row * PACKING_SPACING) - PARTICLE_RADIUS;
+                    
+                    if (finalY < topRimY + PARTICLE_RADIUS) break;
+                    
                     particles.push({
-                        x: TAP_X, y: TAP_Y + 15,
-                        tx, ty,
-                        vx: (Math.random()-0.5)*5, vy: Math.random()*2,
-                        delay: j + (i*10), settled: false,
-                        type: 'vase'
+                        x: TAP_X,
+                        y: TAP_Y + 10,
+                        vx: (Math.random() - 0.5) * 4 + (finalX - TAP_X) * 0.015,
+                        vy: Math.random() * 2,
+                        r: PARTICLE_RADIUS,
+                        color: DROPLET_COLOR,
+                        settled: false,
+                        finalX: finalX,
+                        finalY: finalY,
+                        delay: j + (i * 10) 
                     });
                 }
             });
 
-            // Generate Overflow Particles
-            const safeOverflow = Math.min(Math.max(0, overflowParticles), 300);
-            for(let j=0; j<safeOverflow; j++) {
-                const tx = Math.random() * width;
-                const ty = height - 30 - Math.random()*10;
-                particles.push({
-                    x: TAP_X, y: TAP_Y + 15,
-                    tx, ty,
-                    vx: (Math.random()-0.5)*10, vy: Math.random()*2,
-                    delay: 200 + j, settled: false,
-                    type: 'floor'
-                });
-            }
+            if (overflowDroplets > 0) {
+                const safeOverflow = Math.min(overflowDroplets, 1000);
+                const floorY = height - 30; 
+                const spreadW = width * 0.95;
+                const centerX = width / 2;
+                
+                for (let j = 0; j < safeOverflow; j++) {
+                     const finalX = (Math.random() * spreadW) + (centerX - spreadW/2);
+                     const finalY = floorY - Math.random() * 8; 
 
-            // --- DRAWING FUNCTIONS ---
-
-            const drawCurvyVase = (ctx, x, bottomY, w, h) => {
-                const cx = x + w/2;
-                const topY = bottomY - h;
-                
-                ctx.save();
-                ctx.beginPath();
-                
-                // Styles per reference: Blue dotted pattern
-                const patternSize = 4;
-                
-                // Draw Shape Path
-                // Rim
-                const rimW = w * 0.7;
-                const neckW = w * 0.4;
-                const bodyW = w; 
-                const baseW = w * 0.6;
-                
-                ctx.moveTo(cx - rimW/2, topY);
-                // Neck curve in
-                ctx.bezierCurveTo(cx - rimW/2, topY + h*0.2, cx - neckW/2, topY + h*0.3, cx - neckW/2, topY + h*0.4);
-                // Body curve out
-                ctx.bezierCurveTo(cx - neckW/2, topY + h*0.6, cx - bodyW/2, topY + h*0.6, cx - bodyW/2, topY + h*0.8);
-                // Base curve in
-                ctx.bezierCurveTo(cx - bodyW/2, bottomY, cx - baseW/2, bottomY, cx - baseW/2, bottomY);
-                // Base line
-                ctx.lineTo(cx + baseW/2, bottomY);
-                // Mirror right side
-                ctx.bezierCurveTo(cx + baseW/2, bottomY, cx + bodyW/2, bottomY, cx + bodyW/2, topY + h*0.8);
-                ctx.bezierCurveTo(cx + bodyW/2, topY + h*0.6, cx + neckW/2, topY + h*0.6, cx + neckW/2, topY + h*0.4);
-                ctx.bezierCurveTo(cx + neckW/2, topY + h*0.3, cx + rimW/2, topY + h*0.2, cx + rimW/2, topY);
-                
-                ctx.closePath();
-                
-                // Fill with light blue
-                ctx.fillStyle = '#bae6fd'; // Sky 200
-                ctx.fill();
-                
-                // Clip for dots
-                ctx.save();
-                ctx.clip();
-                ctx.fillStyle = '#3b82f6'; // Blue 500
-                for(let py = topY; py < bottomY; py += patternSize*1.5) {
-                    const offset = (Math.floor(py/(patternSize*1.5)) % 2) * (patternSize);
-                    for(let px = x - w; px < x + w*2; px += patternSize*2) {
-                        ctx.beginPath();
-                        ctx.arc(px + offset, py, 1, 0, Math.PI*2);
-                        ctx.fill();
-                    }
+                     particles.push({
+                        x: TAP_X,
+                        y: TAP_Y + 15,
+                        vx: (Math.random() - 0.5) * 8, 
+                        vy: Math.random() * 3,
+                        r: PARTICLE_RADIUS,
+                        color: DROPLET_COLOR,
+                        settled: false,
+                        finalX: finalX,
+                        finalY: finalY,
+                        delay: 100 + j 
+                    });
                 }
-                ctx.restore();
-                
-                // Stroke outline
-                ctx.lineWidth = 2;
-                ctx.strokeStyle = '#000';
-                ctx.stroke();
-                
-                // Rim Ellipse
-                ctx.beginPath();
-                ctx.ellipse(cx, topY, rimW/2, 3, 0, 0, Math.PI*2);
-                ctx.fillStyle = '#bae6fd';
-                ctx.fill();
-                ctx.stroke();
-                
-                ctx.restore();
-            };
-
-            const drawSilverTap = (ctx, x, y) => {
-                ctx.save();
-                ctx.translate(x, y);
-                const scale = 0.8;
-                ctx.scale(scale, scale);
-                
-                ctx.lineWidth = 2;
-                ctx.strokeStyle = '#334155';
-                
-                // Base Pipe (Vertical)
-                ctx.fillStyle = '#cbd5e1'; // Slate 300
-                ctx.beginPath();
-                ctx.rect(-10, -30, 20, 30);
-                ctx.fill(); ctx.stroke();
-                
-                // Handle Stem
-                ctx.beginPath();
-                ctx.rect(-4, -45, 8, 15);
-                ctx.fill(); ctx.stroke();
-                
-                // Handle Turn (Top)
-                ctx.fillStyle = '#94a3b8'; // Slate 400
-                ctx.beginPath();
-                ctx.roundRect(-20, -55, 40, 10, 3);
-                ctx.fill(); ctx.stroke();
-                
-                // Spout Body (Horizontal curve)
-                ctx.fillStyle = '#cbd5e1';
-                ctx.beginPath();
-                ctx.moveTo(-12, -10);
-                ctx.lineTo(25, -10);
-                ctx.bezierCurveTo(45, -10, 45, 10, 25, 10); // Spout opening
-                ctx.lineTo(-12, 10);
-                ctx.fill(); ctx.stroke();
-                
-                // Spout Tip
-                ctx.fillStyle = '#64748b';
-                ctx.beginPath();
-                ctx.ellipse(30, 2, 8, 4, 0, 0, Math.PI*2);
-                ctx.fill(); ctx.stroke();
-                
-                // Water stream start
-                // ctx.fillStyle = '#3b82f6';
-                // ctx.beginPath();
-                // ctx.rect(26, 6, 8, 10);
-                // ctx.fill();
-
-                ctx.restore();
-            };
-
-            const drawTearDrop = (ctx, x, y, r, color) => {
-                ctx.save();
-                ctx.translate(x, y);
-                ctx.fillStyle = color;
-                ctx.strokeStyle = '#1e3a8a';
-                ctx.lineWidth = 0.5;
-                
-                ctx.beginPath();
-                // Tear drop shape
-                ctx.moveTo(0, -r*1.8); 
-                ctx.quadraticCurveTo(r, -r*0.5, r, r*0.5); 
-                ctx.arc(0, r*0.5, r, 0, Math.PI); 
-                ctx.quadraticCurveTo(-r, -r*0.5, 0, -r*1.8);
-                
-                ctx.fill();
-                ctx.stroke();
-                
-                // Shine
-                ctx.fillStyle = 'rgba(255,255,255,0.6)';
-                ctx.beginPath();
-                ctx.ellipse(-r*0.3, 0, r*0.15, r*0.4, 0.2, 0, Math.PI*2);
-                ctx.fill();
-                
-                ctx.restore();
-            };
-
-            let frame = 0;
-            function animate() {
-                frame++;
-                ctx.clearRect(0,0,width,height);
-                
-                // Floor
-                ctx.beginPath(); ctx.moveTo(0, height-30); ctx.lineTo(width, height-30); 
-                ctx.strokeStyle = '#cbd5e1'; ctx.lineWidth = 2; ctx.stroke();
-
-                // Vases
-                vases.forEach((v, i) => {
-                   const config = vaseConfig[v];
-                   if(config.h > 0) {
-                       drawCurvyVase(ctx, config.x, height-30, config.w, config.h);
-                   } else {
-                       ctx.fillStyle = '#94a3b8';
-                       ctx.font = '9px Inter';
-                       ctx.textAlign = 'center';
-                       ctx.fillText(v.split(' ')[0], config.x + config.w/2, height - 15);
-                   }
-                });
-
-                // Particles
-                particles.forEach(p => {
-                    if(frame < p.delay) return;
-                    if(!p.settled) {
-                        p.vy += 0.2;
-                        p.x += (p.tx - p.x) * 0.08;
-                        p.y += p.vy;
-                        
-                        if(p.y >= p.ty) { p.y = p.ty; p.settled = true; }
-                    }
-                    drawTearDrop(ctx, p.x, p.y, 3, '#3b82f6');
-                });
-
-                // Tap
-                drawSilverTap(ctx, TAP_X, TAP_Y);
-
-                // Labels
-                vases.forEach((v) => {
-                    const config = vaseConfig[v];
-                    if(config.h > 0) {
-                        const amt = expenses[v];
-                        const cx = config.x + config.w/2;
-                        const topY = height - 30 - config.h;
-                        
-                        ctx.font = 'bold 9px Inter';
-                        const txt = '£' + amt.toFixed(0);
-                        const tm = ctx.measureText(txt);
-                        ctx.fillStyle = 'rgba(255,255,255,0.8)';
-                        ctx.fillRect(cx - tm.width/2 - 2, topY - 12, tm.width + 4, 10);
-                        ctx.fillStyle = '#166534';
-                        ctx.textAlign = 'center';
-                        ctx.fillText(txt, cx, topY - 4);
-                        
-                        ctx.fillStyle = '#475569';
-                        ctx.fillText(v.split(' ')[0], cx, height - 15);
-                    }
-                });
-                
-                // Info Overlay
-                ctx.textAlign = 'left';
-                ctx.font = 'bold 12px Inter';
-                ctx.fillStyle = '#059669'; 
-                ctx.fillText(`Income (Droplets): £${income.toFixed(0)}`, 20, 20);
-                ctx.fillStyle = '#dc2626'; 
-                ctx.fillText(`Expense (Vases): £${totalExp.toFixed(0)}`, 20, 36);
-
-                if(animationId) animationId = requestAnimationFrame(animate);
             }
-            if(animationId) cancelAnimationFrame(animationId);
-            animationId = requestAnimationFrame(animate);
-        }
 
-        // --- VIEW: BANK ---
-        function getBankHTML() {
-            return `
-                <div class="space-y-6">
-                    <div class="bg-gradient-to-r from-sky-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg shadow-sky-200">
-                        <h2 class="text-xl font-bold flex items-center gap-2"><i data-lucide="droplets"></i> Droplet Savings</h2>
-                        <p class="text-3xl font-bold mt-4">${store.data.ponds.reduce((a,b)=>a+b.droplets, 0)}<span class="text-base font-normal opacity-75 ml-2">total</span></p>
+            let animationFrameId;
+            let frameCount = 0;
+
+            const render = () => {
+              frameCount++;
+              ctx.clearRect(0, 0, width, height);
+
+              // Floor
+              ctx.beginPath();
+              ctx.moveTo(0, height - 30);
+              ctx.lineTo(width, height - 30);
+              ctx.strokeStyle = '#cbd5e1';
+              ctx.lineWidth = 2;
+              ctx.stroke();
+
+              // Draw Vases (Background)
+              VASES.forEach(cat => {
+                  const config = vaseConfig[cat];
+                  if (config.h > 0) {
+                      drawVase(ctx, config.x, config.y, config.w, config.h, config.colorTheme);
+                  }
+              });
+
+              // Draw Particles
+              particles.forEach(p => {
+                if (frameCount < p.delay) return;
+
+                if (!p.settled) {
+                  p.vy += 0.25; 
+                  p.x += p.vx;
+                  p.y += p.vy;
+
+                  const dx = p.finalX - p.x;
+                  p.vx += dx * 0.01;
+                  p.vx *= 0.95;
+
+                  if (p.y >= p.finalY) {
+                    p.y = p.finalY;
+                    p.x = p.finalX;
+                    p.settled = true;
+                  }
+                }
+                drawCartoonDroplet(ctx, p.x, p.y, p.r, p.color);
+              });
+
+              // Tap
+              drawCartoonTap(ctx, TAP_X, TAP_Y);
+
+              // Draw Labels
+              VASES.forEach(cat => {
+                  const config = vaseConfig[cat];
+                  if (config.h > 0) {
+                      drawVaseLabel(ctx, config.x, config.y, config.w, config.h, cat, expensesByCategory[cat] || 0, config.colorTheme);
+                  } else {
+                     ctx.fillStyle = '#94a3b8';
+                     ctx.font = '9px Inter';
+                     ctx.textAlign = 'center';
+                     ctx.fillText(cat, config.x + config.w/2, height - 15);
+                     ctx.fillText('£0', config.x + config.w/2, height - 5);
+                  }
+              });
+
+              ctx.fillStyle = '#64748b';
+              ctx.font = '10px Inter';
+              ctx.textAlign = 'right';
+              ctx.fillText(`1 Drop ≈ £${DYNAMIC_DROPLET_VALUE}`, width - 20, 20);
+              
+              ctx.textAlign = 'left';
+              ctx.font = 'bold 12px Inter';
+              ctx.fillStyle = '#059669'; 
+              ctx.fillText(`Income: £${totalIncome.toFixed(0)}`, 20, 20);
+              ctx.fillStyle = '#dc2626'; 
+              ctx.fillText(`Expense: £${totalExpense.toFixed(0)}`, 20, 36);
+
+              animationFrameId = requestAnimationFrame(render);
+            };
+
+            render();
+            return () => cancelAnimationFrame(animationFrameId);
+          }, [transactions, currentMonth, currentYear, viewMode, expenseCategories]);
+
+          const drawVase = (ctx, x, bottomY, w, h, theme) => {
+            const cx = x + w / 2;
+            const topY = bottomY - h;
+            
+            ctx.save();
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = theme.outline;
+
+            const rimW = w * 0.7;
+            const neckW = w * 0.45;
+            const bodyW = w * 0.95;
+            const baseW = w * 0.6;
+            
+            const rimY = topY;
+            const neckStartY = topY + h * 0.15;
+            const bodyWidestY = topY + h * 0.6;
+            const baseY = bottomY;
+
+            ctx.beginPath();
+            ctx.moveTo(cx - rimW/2, rimY);
+            ctx.quadraticCurveTo(cx - rimW/2, neckStartY, cx - neckW/2, neckStartY); 
+            ctx.quadraticCurveTo(cx - bodyW, bodyWidestY, cx - baseW/2, baseY); 
+            ctx.lineTo(cx + baseW/2, baseY); 
+            ctx.quadraticCurveTo(cx + bodyW, bodyWidestY, cx + neckW/2, neckStartY); 
+            ctx.quadraticCurveTo(cx + rimW/2, neckStartY, cx + rimW/2, rimY); 
+            ctx.closePath();
+
+            ctx.fillStyle = theme.body;
+            ctx.fill();
+
+            ctx.save();
+            ctx.clip();
+            ctx.fillStyle = theme.dot;
+            const spacing = 5;
+            for(let py = topY; py < bottomY; py += spacing) {
+                const off = (Math.floor(py/spacing)%2)*(spacing/2);
+                for(let px = x - w; px < x + w*2; px+=spacing) {
+                    ctx.beginPath();
+                    ctx.arc(px+off, py, 1.5, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            }
+            ctx.restore();
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.ellipse(cx, rimY, rimW/2, 4, 0, 0, Math.PI*2);
+            ctx.fillStyle = theme.inside;
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.restore();
+          };
+
+          const drawVaseLabel = (ctx, x, bottomY, w, h, label, amount, theme) => {
+            const cx = x + w / 2;
+            const topY = bottomY - h;
+
+            ctx.save();
+            
+            ctx.fillStyle = '#475569';
+            ctx.font = '600 9px Inter';
+            ctx.textAlign = 'center';
+            
+            const labelY = bottomY + 12;
+            const words = label.split(' ');
+            if (words.length > 1 && w < 50) {
+                ctx.fillText(words[0], cx, labelY);
+                ctx.fillText(words[1], cx, labelY + 9);
+            } else {
+                ctx.fillText(label, cx, labelY);
+            }
+
+            ctx.font = 'bold 9px Inter';
+            const amountText = `£${amount.toFixed(0)}`;
+            
+            const textMetrics = ctx.measureText(amountText);
+            const bgH = 14;
+            const bgW = textMetrics.width + 10;
+            
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+            ctx.beginPath();
+            ctx.roundRect(cx - bgW/2, topY - 10 - bgH + 3, bgW, bgH, 4);
+            ctx.fill();
+
+            ctx.fillStyle = theme.text; 
+            ctx.fillText(amountText, cx, topY - 10);
+
+            ctx.restore();
+          };
+
+          const drawCartoonTap = (ctx, x, y) => {
+              ctx.save();
+              ctx.translate(x, y);
+              const scale = 0.8;
+              ctx.scale(scale, scale);
+              const outlineColor = '#0f172a';
+              ctx.fillStyle = '#fbbf24'; 
+              ctx.strokeStyle = outlineColor;
+              ctx.lineWidth = 2;
+              ctx.beginPath(); ctx.ellipse(-30, 0, 10, 25, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+              ctx.fillStyle = '#cbd5e1'; 
+              ctx.beginPath(); ctx.moveTo(-30, -10); ctx.lineTo(0, -10); ctx.quadraticCurveTo(20, -10, 20, 10);
+              ctx.lineTo(20, 25); ctx.lineTo(10, 25); ctx.lineTo(10, 10); ctx.quadraticCurveTo(10, 0, -30, 0);
+              ctx.closePath(); ctx.fill(); ctx.stroke();
+              ctx.fillStyle = '#94a3b8';
+              ctx.beginPath(); ctx.rect(10, 22, 10, 6); ctx.fill(); ctx.stroke();
+              ctx.fillStyle = '#cbd5e1';
+              ctx.beginPath(); ctx.roundRect(-5, -25, 10, 15, 2); ctx.fill(); ctx.stroke();
+              ctx.beginPath(); ctx.roundRect(-15, -30, 30, 8, 3); ctx.fill(); ctx.stroke();
+              ctx.restore();
+          };
+
+          const drawCartoonDroplet = (ctx, x, y, r, color) => {
+              ctx.save();
+              ctx.translate(x, y);
+              ctx.fillStyle = color;
+              ctx.beginPath();
+              ctx.moveTo(0, -r * 1.5);
+              ctx.quadraticCurveTo(r, -r * 0.5, r, r * 0.5);
+              ctx.arc(0, r * 0.5, r, 0, Math.PI);
+              ctx.quadraticCurveTo(-r, -r * 0.5, 0, -r * 1.5);
+              ctx.closePath();
+              ctx.fill();
+              ctx.restore();
+          };
+
+          return (
+            <div className="w-full bg-white rounded-3xl overflow-hidden shadow-xl shadow-sky-100 border border-slate-100 mt-4">
+              <div className="bg-white px-6 py-4 border-b border-slate-50 flex justify-between items-center">
+                <div className="flex items-center gap-2">
+                    <div className="p-1.5 bg-green-100 rounded-lg">
+                        <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
                     </div>
-                    <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
-                        <form onsubmit="handleAddPond(event)" class="flex gap-2">
-                            <input name="name" type="text" placeholder="New Pond Name..." class="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none" required />
-                            <button type="submit" class="bg-sky-500 text-white p-3 rounded-xl"><i data-lucide="plus"></i></button>
-                        </form>
-                    </div>
-                    <div class="space-y-4">
-                        ${store.data.ponds.map(p => `
-                            <div class="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 relative overflow-hidden">
-                                <div class="flex justify-between mb-4 relative z-10">
-                                    <h3 class="text-lg font-bold text-slate-700">${p.name}</h3>
-                                    <button onclick="deleteLog('ponds', '${p.id}')" class="text-slate-300 hover:text-red-400"><i data-lucide="trash-2" width="16"></i></button>
-                                </div>
-                                <div class="flex justify-between items-center relative z-10">
-                                    <div class="flex items-center gap-2 bg-slate-50 rounded-xl p-1">
-                                        <button onclick="updateDroplets('${p.id}', -1)" class="w-10 h-10 flex items-center justify-center bg-white rounded-lg shadow-sm text-slate-400"><i data-lucide="minus" width="16"></i></button>
-                                        <input type="number" value="${p.droplets}" onchange="setDroplets('${p.id}', this.value)" class="w-16 h-10 text-center font-bold text-xl bg-transparent focus:outline-none text-sky-600" />
-                                        <button onclick="updateDroplets('${p.id}', 1)" class="w-10 h-10 flex items-center justify-center bg-sky-500 rounded-lg shadow-sm text-white"><i data-lucide="plus" width="16"></i></button>
-                                    </div>
-                                    <div class="flex text-sky-400">
-                                        ${Array.from({length: Math.min(5, Math.max(0, p.droplets))}).map(()=>`<i data-lucide="droplets" width="16" class="fill-current"></i>`).join('')}
-                                        ${p.droplets > 5 ? '...' : ''}
-                                    </div>
-                                </div>
-                                ${p.droplets > 0 ? `<div class="absolute bottom-0 left-0 h-1 bg-sky-500 transition-all" style="width: ${Math.min(100, p.droplets*2)}%"></div>` : ''}
-                            </div>
-                        `).join('')}
+                    <div>
+                        <h3 className="text-slate-700 text-xs font-bold uppercase tracking-wider">Cash Flow</h3>
+                        <p className="text-[10px] text-slate-400">Income (Water) → Expenses (Vases)</p>
                     </div>
                 </div>
-            `;
-        }
+                <span className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1 rounded-full">
+                    {viewMode === 'month' 
+                      ? new Date(currentYear, currentMonth).toLocaleString('default', { month: 'short', year: 'numeric' })
+                      : currentYear
+                    }
+                </span>
+              </div>
+              
+              <div className="relative bg-white">
+                  <canvas ref={canvasRef} className="w-full h-[400px] block" />
+              </div>
+            </div>
+          );
+        };
 
-        window.handleAddPond = (e) => {
+        const WeightSection = ({ logs, setLogs }) => {
+          const [weight, setWeight] = useState('');
+
+          const handleSubmit = (e) => {
             e.preventDefault();
-            const name = e.target.name.value;
-            store.save('ponds', [{id: Date.now().toString(), name, droplets: 0}, ...store.data.ponds]);
-        };
-        window.updateDroplets = (id, d) => {
-            store.save('ponds', store.data.ponds.map(p => p.id === id ? {...p, droplets: p.droplets + d} : p));
-        };
-        window.setDroplets = (id, v) => {
-            store.save('ponds', store.data.ponds.map(p => p.id === id ? {...p, droplets: parseInt(v) || 0} : p));
+            if (!weight) return;
+
+            const newLog = {
+              id: Date.now().toString(),
+              date: new Date().toISOString(),
+              weight: parseFloat(weight),
+            };
+
+            const updated = [newLog, ...logs].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            setLogs(updated);
+            setWeight('');
+          };
+
+          const handleDelete = (id) => {
+            setLogs(logs.filter(l => l.id !== id));
+          };
+
+          const handleWeightChange = (e) => {
+            const val = e.target.value;
+            if (val.includes('-')) return;
+            setWeight(val);
+          };
+
+          const chartData = [...logs]
+            .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+            .map(l => ({
+              date: new Date(l.date).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' }),
+              weight: l.weight
+            }))
+            .slice(-10); 
+
+          return (
+            <div className="space-y-6">
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-pink-100">
+                <h2 className="text-lg font-bold text-slate-700 mb-4">Record Weight</h2>
+                <form onSubmit={handleSubmit} className="flex gap-3">
+                  <div className="relative flex-1">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={weight}
+                      onChange={handleWeightChange}
+                      placeholder="0.0"
+                      className="w-full pl-4 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-300 transition-all"
+                    />
+                    <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">kg</span>
+                  </div>
+                  <button
+                    type="submit"
+                    className="bg-pink-400 hover:bg-pink-500 text-white p-3 rounded-xl transition-colors shadow-lg shadow-pink-200"
+                  >
+                    <Plus size={24} />
+                  </button>
+                </form>
+              </div>
+
+              {logs.length > 0 && (
+                <div className="bg-white rounded-2xl p-6 shadow-sm border border-sky-100">
+                   <h3 className="text-md font-semibold text-slate-600 mb-4">Progress</h3>
+                   <div className="h-48 w-full">
+                     <ResponsiveContainer width="100%" height="100%">
+                       <LineChart data={chartData}>
+                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                         <XAxis dataKey="date" tick={{fontSize: 10}} tickLine={false} axisLine={false} />
+                         <YAxis domain={['dataMin - 2', 'dataMax + 2']} hide />
+                         <Tooltip 
+                            contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}}
+                         />
+                         <Line type="monotone" dataKey="weight" stroke="#f472b6" strokeWidth={3} dot={{r: 4, fill: '#f472b6'}} activeDot={{r: 6}} />
+                       </LineChart>
+                     </ResponsiveContainer>
+                   </div>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider ml-1">History</h3>
+                {logs.map((log) => (
+                  <div key={log.id} className="bg-white p-4 rounded-xl shadow-sm flex justify-between items-center border border-slate-50">
+                    <div>
+                      <p className="text-lg font-bold text-slate-700">{log.weight} <span className="text-sm font-normal text-slate-400">kg</span></p>
+                      <p className="text-xs text-slate-400">{new Date(log.date).toLocaleString()}</p>
+                    </div>
+                    <button onClick={() => handleDelete(log.id)} className="text-slate-300 hover:text-red-400 transition-colors">
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                ))}
+                {logs.length === 0 && (
+                  <p className="text-center text-slate-400 py-8">No records yet. Start tracking!</p>
+                )}
+              </div>
+            </div>
+          );
         };
 
-        // --- GLOBAL ACTIONS ---
-        window.deleteLog = (key, id) => {
-            store.save(key, store.data[key].filter(i => i.id !== id));
+        const DietSection = ({ logs, setLogs }) => {
+          const [vegBowls, setVegBowls] = useState(1);
+          const [sauce, setSauce] = useState(SauceAmount.MODERATE);
+          const [coldDrink, setColdDrink] = useState(false);
+          const [sugarDrink, setSugarDrink] = useState(false);
+
+          const handleSubmit = (e) => {
+            e.preventDefault();
+            const newLog = {
+              id: Date.now().toString(),
+              date: new Date().toISOString(),
+              vegetableBowls: vegBowls,
+              sauce,
+              hasColdDrink: coldDrink,
+              hasSugarDrink: sugarDrink,
+            };
+            setLogs([newLog, ...logs]);
+            setVegBowls(1);
+            setSauce(SauceAmount.MODERATE);
+            setColdDrink(false);
+            setSugarDrink(false);
+          };
+
+          const getScoreColor = (log) => {
+            let score = 0;
+            if (log.vegetableBowls >= 1) score++;
+            if (log.sauce === SauceAmount.NONE || log.sauce === SauceAmount.LITTLE) score++;
+            if (!log.hasColdDrink) score++;
+            if (!log.hasSugarDrink) score++;
+
+            if (score === 4) return 'bg-green-100 border-green-200';
+            if (score >= 2) return 'bg-yellow-50 border-yellow-100';
+            return 'bg-red-50 border-red-100';
+          };
+
+          return (
+            <div className="space-y-6">
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-sky-100">
+                <h2 className="text-lg font-bold text-slate-700 mb-4">Log Meal</h2>
+                <form onSubmit={handleSubmit} className="space-y-5">
+                  
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-600">Vegetable Bowls</label>
+                    <div className="flex gap-2">
+                      {[0, 0.5, 0.75, 1, 2].map(num => (
+                        <button
+                          key={num}
+                          type="button"
+                          onClick={() => setVegBowls(num)}
+                          className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
+                            vegBowls === num
+                              ? 'bg-sky-400 text-white shadow-md shadow-sky-200'
+                              : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
+                          }`}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-600">Sauce Amount</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {Object.values(SauceAmount).map((s) => (
+                        <button
+                          key={s}
+                          type="button"
+                          onClick={() => setSauce(s)}
+                          className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${
+                            sauce === s
+                              ? 'bg-pink-400 text-white shadow-md shadow-pink-200'
+                              : 'bg-slate-50 text-slate-500 hover:bg-slate-100'
+                          }`}
+                        >
+                          {s}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => setColdDrink(!coldDrink)}
+                      className={`p-3 rounded-xl border-2 transition-all flex items-center justify-center gap-2 ${
+                        coldDrink ? 'border-sky-400 bg-sky-50 text-sky-600' : 'border-slate-100 text-slate-400'
+                      }`}
+                    >
+                      Cold Drink
+                      {coldDrink ? <Check size={16} /> : <X size={16} />}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSugarDrink(!sugarDrink)}
+                      className={`p-3 rounded-xl border-2 transition-all flex items-center justify-center gap-2 ${
+                        sugarDrink ? 'border-pink-400 bg-pink-50 text-pink-600' : 'border-slate-100 text-slate-400'
+                      }`}
+                    >
+                      Sugar Drink
+                      {sugarDrink ? <Check size={16} /> : <X size={16} />}
+                    </button>
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full bg-slate-800 text-white py-3 rounded-xl font-semibold shadow-lg hover:bg-slate-700 transition-colors"
+                  >
+                    Save Meal
+                  </button>
+                </form>
+              </div>
+
+              <div className="space-y-3">
+                <h3 className="text-sm font-semibold text-slate-500 uppercase tracking-wider ml-1">Recent Meals</h3>
+                {logs.map((log) => (
+                  <div key={log.id} className={`p-4 rounded-xl shadow-sm border ${getScoreColor(log)} flex justify-between items-start`}>
+                    <div className="space-y-1">
+                      <p className="text-xs text-slate-400">{new Date(log.date).toLocaleString()}</p>
+                      <div className="flex flex-wrap gap-2 text-sm text-slate-700">
+                        <span className="font-medium bg-white/50 px-2 py-0.5 rounded">🥗 {log.vegetableBowls} bowls</span>
+                        <span className="font-medium bg-white/50 px-2 py-0.5 rounded">🧂 {log.sauce}</span>
+                      </div>
+                      <div className="flex gap-2 mt-1">
+                        {log.hasColdDrink && <span className="text-xs bg-sky-100 text-sky-600 px-2 py-0.5 rounded-full">Cold Drink</span>}
+                        {log.hasSugarDrink && <span className="text-xs bg-pink-100 text-pink-600 px-2 py-0.5 rounded-full">Sugar Drink</span>}
+                        {!log.hasColdDrink && !log.hasSugarDrink && <span className="text-xs bg-green-100 text-green-600 px-2 py-0.5 rounded-full">Healthy Drink Choice</span>}
+                      </div>
+                    </div>
+                    <button onClick={() => setLogs(logs.filter(l => l.id !== log.id))} className="text-slate-300 hover:text-slate-500">
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
         };
 
-        // --- MAIN RENDER ---
-        function render() {
-            const app = document.getElementById('app');
-            renderNav();
-            renderAlert();
-            
-            // Clean up old canvas animation if changing away from Money tab or Vis view
-            if(animationId && (store.data.activeTab !== 'money' || moneyTab !== 'vis')) {
-                cancelAnimationFrame(animationId);
-                animationId = null;
-            }
+        const ExerciseSection = ({ logs, setLogs }) => {
+          const [type, setType] = useState('Gym');
+          const [intensity, setIntensity] = useState('Medium');
+          const [duration, setDuration] = useState('30');
+          const [remarks, setRemarks] = useState('');
 
-            switch(store.data.activeTab) {
-                case 'summary': app.innerHTML = getSummaryHTML(); break;
-                case 'weight': app.innerHTML = getWeightHTML(); break;
-                case 'diet': app.innerHTML = getDietHTML(); break;
-                case 'exercise': app.innerHTML = getExerciseHTML(); break;
-                case 'money': app.innerHTML = getMoneyHTML(); break;
-                case 'bank': app.innerHTML = getBankHTML(); break;
+          const handleSubmit = (e) => {
+            e.preventDefault();
+            if (!duration) return;
+
+            const newLog = {
+              id: Date.now().toString(),
+              date: new Date().toISOString(),
+              type,
+              intensity,
+              durationMinutes: parseInt(duration),
+              remarks: remarks.trim()
+            };
+
+            setLogs([newLog, ...logs]);
+            setType('Gym');
+            setIntensity('Medium');
+            setDuration('30');
+            setRemarks('');
+          };
+
+          const activityTypes = ['Running', 'Gym', 'Ball Games', 'Swimming', 'Cycling', 'Yoga'];
+
+          return (
+            <div className="space-y-6">
+               <div className="grid grid-cols-2 gap-4">
+                <div className="bg-sky-500 text-white p-4 rounded-2xl shadow-lg shadow-sky-200">
+                  <p className="text-sky-100 text-xs font-medium uppercase">Total Time</p>
+                  <p className="text-3xl font-bold mt-1">
+                    {logs.reduce((acc, curr) => acc + curr.durationMinutes, 0)}
+                    <span className="text-sm font-normal text-sky-200 ml-1">mins</span>
+                  </p>
+                </div>
+                <div className="bg-pink-500 text-white p-4 rounded-2xl shadow-lg shadow-pink-200">
+                  <p className="text-pink-100 text-xs font-medium uppercase">Sessions</p>
+                  <p className="text-3xl font-bold mt-1">
+                    {logs.length}
+                    <span className="text-sm font-normal text-pink-200 ml-1">count</span>
+                  </p>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+                <h2 className="text-lg font-bold text-slate-700 mb-4">Log Workout</h2>
+                <form onSubmit={handleSubmit} className="space-y-5">
+                  
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                      <Activity size={16} /> Activity Type
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      {activityTypes.map(t => (
+                        <button
+                          key={t}
+                          type="button"
+                          onClick={() => setType(t)}
+                          className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-all ${
+                            type === t
+                              ? 'bg-slate-800 text-white border-slate-800'
+                              : 'bg-white text-slate-500 border-slate-200 hover:border-slate-400'
+                          }`}
+                        >
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                      <Zap size={16} /> Intensity
+                    </label>
+                    <div className="flex bg-slate-100 p-1 rounded-xl">
+                      {['Low', 'Medium', 'High'].map((lvl) => (
+                        <button
+                          key={lvl}
+                          type="button"
+                          onClick={() => setIntensity(lvl)}
+                          className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
+                            intensity === lvl
+                              ? lvl === 'High' ? 'bg-red-400 text-white shadow-sm' : lvl === 'Medium' ? 'bg-orange-400 text-white shadow-sm' : 'bg-green-400 text-white shadow-sm'
+                              : 'text-slate-400 hover:text-slate-600'
+                          }`}
+                        >
+                          {lvl}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                      <Clock size={16} /> Duration (mins)
+                    </label>
+                    <input
+                      type="number"
+                      value={duration}
+                      onChange={(e) => setDuration(e.target.value)}
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-300 transition-all"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-600 flex items-center gap-2">
+                      <Edit2 size={16} /> Remarks (Optional)
+                    </label>
+                    <input
+                      type="text"
+                      value={remarks}
+                      onChange={(e) => setRemarks(e.target.value)}
+                      placeholder="e.g., Felt great today, beat personal best..."
+                      className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-300 transition-all text-sm"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    className="w-full bg-gradient-to-r from-sky-400 to-pink-400 text-white py-3 rounded-xl font-bold shadow-lg shadow-pink-100 hover:opacity-90 transition-opacity"
+                  >
+                    Log Session
+                  </button>
+                </form>
+              </div>
+
+              <div className="space-y-3">
+                {logs.map((log) => (
+                  <div key={log.id} className="bg-white p-4 rounded-xl shadow-sm flex justify-between items-center border-l-4 border-l-sky-400">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-slate-700">{log.type}</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full text-white ${
+                          log.intensity === 'High' ? 'bg-red-400' : log.intensity === 'Medium' ? 'bg-orange-400' : 'bg-green-400'
+                        }`}>{log.intensity}</span>
+                      </div>
+                      <p className="text-sm text-slate-500 mt-1">{log.durationMinutes} minutes • {new Date(log.date).toLocaleDateString()}</p>
+                      {log.remarks && <p className="text-xs text-slate-400 mt-1 italic">"{log.remarks}"</p>}
+                    </div>
+                    <button onClick={() => setLogs(logs.filter(l => l.id !== log.id))} className="text-slate-300 hover:text-red-400">
+                      <Trash2 size={18} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          );
+        };
+
+        const ManageCategories = ({ expenseCategories, setExpenseCategories, incomeCategories, setIncomeCategories, onClose, transactions }) => {
+            const [activeTab, setActiveTab] = useState('expense');
+            const [newName, setNewName] = useState('');
+            const [newWarning, setNewWarning] = useState('1000');
+            const [newDanger, setNewDanger] = useState('2000');
+
+            const handleAddExpense = (e) => {
+                e.preventDefault();
+                if (!newName) return;
+                setExpenseCategories([...expenseCategories, { 
+                    id: Date.now().toString(), 
+                    name: newName, 
+                    warning: parseFloat(newWarning) || 1000, 
+                    danger: parseFloat(newDanger) || 2000 
+                }]);
+                setNewName('');
+            };
+
+            const handleAddIncome = (e) => {
+                e.preventDefault();
+                if (!newName) return;
+                setIncomeCategories([...incomeCategories, { id: Date.now().toString(), name: newName }]);
+                setNewName('');
+            };
+
+            const handleDeleteExpense = (id) => {
+                const cat = expenseCategories.find(c => c.id === id);
+                if (!cat) return;
+                // Check if category is used in transactions
+                const isUsed = transactions.some(t => t.type === TransactionType.EXPENSE && t.category === cat.name);
+                if (isUsed) {
+                    alert(`Cannot delete category "${cat.name}" because it has associated transactions.`);
+                    return;
+                }
+                setExpenseCategories(expenseCategories.filter(c => c.id !== id));
+            };
+
+            const handleDeleteIncome = (id) => {
+                const cat = incomeCategories.find(c => c.id === id);
+                if (!cat) return;
+                // Check if category is used in transactions
+                const isUsed = transactions.some(t => t.type === TransactionType.INCOME && t.category === cat.name);
+                if (isUsed) {
+                    alert(`Cannot delete category "${cat.name}" because it has associated transactions.`);
+                    return;
+                }
+                setIncomeCategories(incomeCategories.filter(c => c.id !== id));
+            };
+
+            // Simple inline edit could be complex, for now we allow deleting and re-adding, or just editing thresholds
+            // Let's allow editing thresholds directly in the list
+            const updateThreshold = (id, field, value) => {
+                 setExpenseCategories(expenseCategories.map(c => 
+                     c.id === id ? { ...c, [field]: parseFloat(value) || 0 } : c
+                 ));
+            };
+
+            return (
+                <div className="fixed inset-0 z-50 bg-white flex flex-col">
+                    <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white/80 backdrop-blur-md">
+                        <h2 className="text-lg font-bold text-slate-800">Manage Categories</h2>
+                        <button onClick={onClose} className="p-2 bg-slate-100 rounded-full text-slate-500 hover:bg-slate-200">
+                            <X size={20} />
+                        </button>
+                    </div>
+
+                    <div className="flex p-2 gap-2 bg-slate-50">
+                        <button onClick={() => setActiveTab('expense')} className={`flex-1 py-2 rounded-lg font-bold text-sm ${activeTab === 'expense' ? 'bg-white shadow text-pink-500' : 'text-slate-400'}`}>Expenses</button>
+                        <button onClick={() => setActiveTab('income')} className={`flex-1 py-2 rounded-lg font-bold text-sm ${activeTab === 'income' ? 'bg-white shadow text-green-500' : 'text-slate-400'}`}>Income</button>
+                    </div>
+
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                        {activeTab === 'expense' ? (
+                            <>
+                                <form onSubmit={handleAddExpense} className="bg-slate-50 p-4 rounded-xl space-y-3">
+                                    <h3 className="text-xs font-bold uppercase text-slate-400">Add New Expense Category</h3>
+                                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Category Name" className="w-full p-2 rounded border border-slate-200 text-sm" />
+                                    <div className="flex gap-2">
+                                        <div className="flex-1">
+                                            <label className="text-[10px] font-bold text-yellow-600">Yellow Limit (£)</label>
+                                            <input type="number" value={newWarning} onChange={e => setNewWarning(e.target.value)} className="w-full p-2 rounded border border-yellow-200 bg-yellow-50 text-sm" />
+                                        </div>
+                                        <div className="flex-1">
+                                            <label className="text-[10px] font-bold text-red-600">Red Limit (£)</label>
+                                            <input type="number" value={newDanger} onChange={e => setNewDanger(e.target.value)} className="w-full p-2 rounded border border-red-200 bg-red-50 text-sm" />
+                                        </div>
+                                    </div>
+                                    <button type="submit" className="w-full py-2 bg-slate-800 text-white rounded-lg font-bold text-sm">Add Category</button>
+                                </form>
+
+                                <div className="space-y-2">
+                                    {expenseCategories.map(cat => (
+                                        <div key={cat.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm">
+                                            <div className="flex justify-between items-center mb-2">
+                                                <span className="font-bold text-slate-700">{cat.name}</span>
+                                                <button onClick={() => handleDeleteExpense(cat.id)} className="text-slate-300 hover:text-red-400"><Trash2 size={16} /></button>
+                                            </div>
+                                            <div className="flex gap-2 text-xs items-center">
+                                                <div className="flex-1 flex items-center gap-1 bg-yellow-50 px-2 py-1 rounded border border-yellow-100">
+                                                    <div className="w-2 h-2 rounded-full bg-yellow-400"></div>
+                                                    <span>&gt;</span>
+                                                    <input type="number" value={cat.warning} onChange={e => updateThreshold(cat.id, 'warning', e.target.value)} className="w-12 bg-transparent border-b border-yellow-200 focus:outline-none" />
+                                                </div>
+                                                <div className="flex-1 flex items-center gap-1 bg-red-50 px-2 py-1 rounded border border-red-100">
+                                                    <div className="w-2 h-2 rounded-full bg-red-400"></div>
+                                                    <span>&gt;</span>
+                                                    <input type="number" value={cat.danger} onChange={e => updateThreshold(cat.id, 'danger', e.target.value)} className="w-12 bg-transparent border-b border-red-200 focus:outline-none" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <form onSubmit={handleAddIncome} className="bg-slate-50 p-4 rounded-xl space-y-3">
+                                    <h3 className="text-xs font-bold uppercase text-slate-400">Add New Income Category</h3>
+                                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Category Name" className="w-full p-2 rounded border border-slate-200 text-sm" />
+                                    <button type="submit" className="w-full py-2 bg-slate-800 text-white rounded-lg font-bold text-sm">Add Category</button>
+                                </form>
+                                <div className="space-y-2">
+                                    {incomeCategories.map(cat => (
+                                        <div key={cat.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm flex justify-between items-center">
+                                            <span className="font-bold text-slate-700">{cat.name}</span>
+                                            <button onClick={() => handleDeleteIncome(cat.id)} className="text-slate-300 hover:text-red-400"><Trash2 size={16} /></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+                    </div>
+                </div>
+            );
+        };
+
+        const MoneySection = ({ transactions, setTransactions, expenseCategories, setExpenseCategories, incomeCategories, setIncomeCategories }) => {
+          const [tab, setTab] = useState('log');
+          const [viewMode, setViewMode] = useState('month');
+          const [amount, setAmount] = useState('');
+          const [currency, setCurrency] = useState(Currency.GBP);
+          const [transType, setTransType] = useState(TransactionType.EXPENSE);
+          const [category, setCategory] = useState(expenseCategories[0]?.name || 'General');
+          const [viewDate, setViewDate] = useState(new Date());
+          const [showSettings, setShowSettings] = useState(false);
+
+          // Update default category when type switches
+          useEffect(() => {
+              if (transType === TransactionType.EXPENSE && expenseCategories.length > 0) {
+                  setCategory(expenseCategories[0].name);
+              } else if (transType === TransactionType.INCOME && incomeCategories.length > 0) {
+                  setCategory(incomeCategories[0].name);
+              }
+          }, [transType]);
+
+          const handleDateChange = (offset) => {
+            const newDate = new Date(viewDate);
+            if (viewMode === 'month') {
+                newDate.setMonth(newDate.getMonth() + offset);
+            } else {
+                newDate.setFullYear(newDate.getFullYear() + offset);
             }
-            
-            // Refresh Icons
-            lucide.createIcons();
-            
-            // Trigger Money Canvas if needed
-            if(store.data.activeTab === 'money' && moneyTab === 'vis') {
-                setTimeout(initCanvas, 50);
+            setViewDate(newDate);
+          };
+
+          const handleSubmit = (e) => {
+            e.preventDefault();
+            if (!amount) return;
+
+            const val = parseFloat(amount);
+            const newTrans = {
+              id: Date.now().toString(),
+              date: new Date().toISOString(),
+              type: transType,
+              originalAmount: val,
+              originalCurrency: currency,
+              amount: currency === Currency.HKD ? val * EXCHANGE_RATE_HKD_TO_GBP : val,
+              category: category,
+            };
+
+            setTransactions([newTrans, ...transactions]);
+            setAmount('');
+          };
+
+          const handleDeleteTransaction = (id) => {
+              // Delete directly without confirmation
+              setTransactions(transactions.filter(t => t.id !== id));
+          };
+
+          const activeCategories = transType === TransactionType.INCOME ? incomeCategories : expenseCategories;
+
+          const stats = useMemo(() => {
+            const filtered = transactions.filter(t => {
+              const d = new Date(t.date);
+              if (viewMode === 'month') {
+                return d.getMonth() === viewDate.getMonth() && d.getFullYear() === viewDate.getFullYear();
+              } else {
+                return d.getFullYear() === viewDate.getFullYear();
+              }
+            });
+
+            const income = filtered
+              .filter(t => t.type === TransactionType.INCOME)
+              .reduce((sum, t) => sum + t.amount, 0);
+              
+            const expense = filtered
+              .filter(t => t.type === TransactionType.EXPENSE)
+              .reduce((sum, t) => sum + t.amount, 0);
+
+            return { income, expense, balance: income - expense, filtered };
+          }, [transactions, viewDate, viewMode]);
+
+          if (showSettings) {
+              return (
+                <ManageCategories 
+                    expenseCategories={expenseCategories} 
+                    setExpenseCategories={setExpenseCategories}
+                    incomeCategories={incomeCategories}
+                    setIncomeCategories={setIncomeCategories}
+                    onClose={() => setShowSettings(false)}
+                    transactions={transactions}
+                />
+              );
+          }
+
+          return (
+            <div className="space-y-6">
+              <div className="flex flex-col gap-3">
+                <div className="flex justify-between items-end">
+                    <button 
+                        onClick={() => setShowSettings(true)}
+                        className="flex items-center gap-1 text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-lg hover:bg-slate-200"
+                    >
+                        <Settings size={14} /> Categories
+                    </button>
+
+                    <div className="bg-slate-100 p-1 rounded-lg flex text-xs font-medium">
+                        <button 
+                            onClick={() => setViewMode('month')}
+                            className={`px-3 py-1 rounded-md transition-all ${viewMode === 'month' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}
+                        >
+                            Monthly
+                        </button>
+                        <button 
+                            onClick={() => setViewMode('year')}
+                            className={`px-3 py-1 rounded-md transition-all ${viewMode === 'year' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}
+                        >
+                            Yearly
+                        </button>
+                    </div>
+                </div>
+
+                <div className="flex justify-between items-center bg-white p-2 rounded-xl shadow-sm border border-slate-100">
+                  <button onClick={() => handleDateChange(-1)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600">←</button>
+                  <span className="font-bold text-slate-700">
+                      {viewMode === 'month' 
+                          ? viewDate.toLocaleString('default', { month: 'long', year: 'numeric' })
+                          : viewDate.getFullYear()
+                      }
+                  </span>
+                  <button onClick={() => handleDateChange(1)} className="p-2 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-slate-600">→</button>
+                </div>
+              </div>
+
+              <div className="flex bg-slate-200 p-1 rounded-xl">
+                <button
+                  onClick={() => setTab('log')}
+                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${tab === 'log' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
+                >
+                  Transactions
+                </button>
+                <button
+                  onClick={() => setTab('summary')}
+                  className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${tab === 'summary' ? 'bg-white shadow text-slate-800' : 'text-slate-500'}`}
+                >
+                  Visualization
+                </button>
+              </div>
+
+              {tab === 'log' ? (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="bg-green-100 p-3 rounded-xl border border-green-200">
+                      <p className="text-green-600 text-[10px] font-bold uppercase">In</p>
+                      <p className="text-green-800 font-bold text-lg">£{stats.income.toFixed(0)}</p>
+                    </div>
+                    <div className="bg-red-100 p-3 rounded-xl border border-red-200">
+                      <p className="text-red-600 text-[10px] font-bold uppercase">Out</p>
+                      <p className="text-red-800 font-bold text-lg">£{stats.expense.toFixed(0)}</p>
+                    </div>
+                     <div className="bg-slate-100 p-3 rounded-xl border border-slate-200">
+                      <p className="text-slate-600 text-[10px] font-bold uppercase">Net</p>
+                      <p className={`font-bold text-lg ${stats.balance >= 0 ? 'text-slate-800' : 'text-red-500'}`}>£{stats.balance.toFixed(0)}</p>
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-2xl p-6 shadow-sm border border-pink-100">
+                    <div className="flex gap-2 mb-4">
+                       <button onClick={() => { setTransType(TransactionType.EXPENSE); }} className={`flex-1 py-2 rounded-lg font-bold text-sm ${transType === TransactionType.EXPENSE ? 'bg-pink-400 text-white' : 'bg-slate-100 text-slate-400'}`}>Expense</button>
+                       <button onClick={() => { setTransType(TransactionType.INCOME); }} className={`flex-1 py-2 rounded-lg font-bold text-sm ${transType === TransactionType.INCOME ? 'bg-green-400 text-white' : 'bg-slate-100 text-slate-400'}`}>Income</button>
+                    </div>
+
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                      <div className="flex gap-2">
+                         <div className="relative flex-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              value={amount}
+                              onChange={(e) => setAmount(e.target.value)}
+                              placeholder="0.00"
+                              className="w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-pink-300"
+                            />
+                            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                                {currency === Currency.GBP ? '£' : '$'}
+                            </span>
+                         </div>
+                         <select
+                            value={currency}
+                            onChange={(e) => setCurrency(e.target.value)}
+                            className="bg-slate-100 rounded-xl px-3 font-medium text-slate-600 focus:outline-none"
+                         >
+                            <option value={Currency.GBP}>GBP</option>
+                            <option value={Currency.HKD}>HKD</option>
+                         </select>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        {activeCategories.map(cat => (
+                          <button
+                            key={cat.id}
+                            type="button"
+                            onClick={() => setCategory(cat.name)}
+                            className={`p-2 text-xs rounded-lg border transition-all truncate ${
+                              category === cat.name
+                                ? 'bg-slate-800 text-white border-slate-800'
+                                : 'border-slate-200 text-slate-500 hover:bg-slate-50'
+                            }`}
+                          >
+                            {cat.name}
+                          </button>
+                        ))}
+                      </div>
+
+                      <button type="submit" className="w-full bg-slate-900 text-white py-3 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg">
+                        <Plus size={18} /> Add {transType}
+                      </button>
+                    </form>
+                  </div>
+                  
+                  <div className="space-y-2">
+                    {stats.filtered.map(t => (
+                       <div key={t.id} className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-50 shadow-sm">
+                          <div className="flex items-center gap-3">
+                             <div className={`p-2 rounded-full ${t.type === TransactionType.INCOME ? 'bg-green-100 text-green-600' : 'bg-pink-100 text-pink-600'}`}>
+                                {t.type === TransactionType.INCOME ? <Coins size={16} /> : <PoundSterling size={16} />}
+                             </div>
+                             <div>
+                                <p className="font-semibold text-slate-700 text-sm">{t.category}</p>
+                                <p className="text-xs text-slate-400">{new Date(t.date).toLocaleDateString()}</p>
+                             </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="text-right">
+                                <p className={`font-bold ${t.type === TransactionType.INCOME ? 'text-green-600' : 'text-slate-800'}`}>
+                                    {t.type === TransactionType.INCOME ? '+' : '-'} {t.originalCurrency === Currency.GBP ? '£' : 'HK$'}{t.originalAmount}
+                                </p>
+                                {t.originalCurrency === Currency.HKD && (
+                                    <p className="text-[10px] text-slate-400">≈ £{t.amount.toFixed(2)}</p>
+                                )}
+                            </div>
+                            <button onClick={() => handleDeleteTransaction(t.id)} className="text-slate-300 hover:text-red-400 p-1">
+                                <Trash2 size={16} />
+                            </button>
+                          </div>
+                       </div>
+                    ))}
+                    {stats.filtered.length === 0 && <p className="text-center text-slate-400 text-sm py-4">No transactions found for this period.</p>}
+                  </div>
+                </>
+              ) : (
+                <MoneyVisualization 
+                    transactions={transactions} 
+                    currentMonth={viewDate.getMonth()} 
+                    currentYear={viewDate.getFullYear()} 
+                    viewMode={viewMode}
+                    expenseCategories={expenseCategories}
+                />
+              )}
+            </div>
+          );
+        };
+
+        const PondRow = ({ pond, onUpdateDroplets, onSetDroplets, onDelete }) => {
+            const [inputValue, setInputValue] = useState(pond.droplets.toString());
+
+            useEffect(() => {
+                setInputValue(pond.droplets.toString());
+            }, [pond.droplets]);
+
+            const handleChange = (e) => {
+                const val = e.target.value;
+                setInputValue(val);
+
+                if (val === '' || val === '-') return;
+
+                const num = parseInt(val);
+                if (!isNaN(num)) {
+                    onSetDroplets(pond.id, num);
+                }
+            };
+
+            return (
+                <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100 relative overflow-hidden group">
+                    <div className="absolute right-0 bottom-0 opacity-5 pointer-events-none">
+                      <Droplets size={120} />
+                    </div>
+
+                    <div className="relative z-10">
+                      <div className="flex justify-between items-start mb-4">
+                        <h3 className="text-lg font-bold text-slate-700">{pond.name}</h3>
+                        <button 
+                          onClick={() => onDelete(pond.id)}
+                          className="text-slate-300 hover:text-red-400 transition-colors p-1"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+
+                      <div className="flex items-end justify-between">
+                        <div className="flex items-center gap-2 bg-slate-50 rounded-xl p-1">
+                          <button
+                            onClick={() => onUpdateDroplets(pond.id, -1)}
+                            className="w-10 h-10 flex items-center justify-center bg-white rounded-lg shadow-sm text-slate-400 hover:text-slate-600 hover:shadow active:scale-95 transition-all"
+                          >
+                            <Minus size={18} />
+                          </button>
+                          
+                          <input 
+                            type="text" 
+                            inputMode="numeric"
+                            value={inputValue} 
+                            onChange={handleChange}
+                            className={`w-16 h-10 text-center font-bold text-xl bg-transparent focus:outline-none focus:ring-2 focus:ring-sky-200 rounded-md ${pond.droplets < 0 ? 'text-red-500' : 'text-sky-600'}`}
+                          />
+
+                          <button
+                            onClick={() => onUpdateDroplets(pond.id, 1)}
+                            className="w-10 h-10 flex items-center justify-center bg-sky-500 rounded-lg shadow-sm text-white hover:bg-sky-600 hover:shadow-md active:scale-95 transition-all"
+                          >
+                            <Plus size={18} />
+                          </button>
+                        </div>
+                        
+                        <div className="flex gap-1 pointer-events-none">
+                          {pond.droplets >= 0 ? (
+                              Array.from({ length: Math.min(5, pond.droplets) }).map((_, i) => (
+                                <Droplets 
+                                  key={i} 
+                                  size={16} 
+                                  className={`text-sky-400 ${i === 4 && pond.droplets > 5 ? 'opacity-50' : 'fill-sky-400'}`} 
+                                />
+                              ))
+                          ) : (
+                               <span className="text-xs text-red-400 font-bold px-2 py-1 bg-red-50 rounded">Overdraft</span>
+                          )}
+                          {pond.droplets > 5 && <span className="text-xs text-sky-400 font-bold">...</span>}
+                        </div>
+                      </div>
+                    </div>
+                    
+                    {pond.droplets > 0 && (
+                        <div className="absolute bottom-0 left-0 h-1 bg-sky-500 transition-all duration-500" style={{ width: `${Math.min(100, pond.droplets * 2)}%` }} />
+                    )}
+                    {pond.droplets < 0 && (
+                        <div className="absolute bottom-0 left-0 h-1 bg-red-400 w-full opacity-50" />
+                    )}
+                </div>
+            );
+        };
+
+        const BankSection = ({ ponds, setPonds }) => {
+          const [newPondName, setNewPondName] = useState('');
+
+          const handleAddPond = (e) => {
+            e.preventDefault();
+            if (!newPondName.trim()) return;
+
+            const newPond = {
+              id: Date.now().toString(),
+              name: newPondName.trim(),
+              droplets: 0,
+            };
+
+            setPonds([newPond, ...ponds]);
+            setNewPondName('');
+          };
+
+          const updateDroplets = (id, delta) => {
+            setPonds(ponds.map(pond => {
+              if (pond.id === id) {
+                const newCount = pond.droplets + delta;
+                return { ...pond, droplets: newCount };
+              }
+              return pond;
+            }));
+          };
+
+          const setDropletsValue = (id, value) => {
+            setPonds(ponds.map(pond => {
+              if (pond.id === id) {
+                return { ...pond, droplets: value };
+              }
+              return pond;
+            }));
+          };
+
+          const deletePond = (id) => {
+            setPonds(ponds.filter(p => p.id !== id));
+          };
+
+          return (
+            <div className="space-y-6">
+              <div className="bg-gradient-to-r from-sky-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg shadow-sky-200">
+                <h2 className="text-xl font-bold flex items-center gap-2">
+                  <Droplets className="fill-white" />
+                  Droplet Savings
+                </h2>
+                <p className="opacity-90 text-sm mt-1">Collect your savings in different ponds.</p>
+                <p className="text-3xl font-bold mt-4">
+                  {ponds.reduce((acc, curr) => acc + curr.droplets, 0)}
+                  <span className="text-base font-normal opacity-75 ml-2">total droplets</span>
+                </p>
+              </div>
+
+              <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
+                <h3 className="text-sm font-bold text-slate-700 mb-3 uppercase tracking-wider">Create New Pond</h3>
+                <form onSubmit={handleAddPond} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newPondName}
+                    onChange={(e) => setNewPondName(e.target.value)}
+                    placeholder="e.g. Trip to Japan, New Laptop..."
+                    className="flex-1 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-sky-300 transition-all text-sm"
+                  />
+                  <button
+                    type="submit"
+                    disabled={!newPondName.trim()}
+                    className="bg-sky-500 hover:bg-sky-600 disabled:opacity-50 text-white p-3 rounded-xl transition-colors shadow-lg shadow-sky-100"
+                  >
+                    <Plus size={20} />
+                  </button>
+                </form>
+              </div>
+
+              <div className="space-y-4">
+                {ponds.map((pond) => (
+                  <PondRow 
+                    key={pond.id} 
+                    pond={pond} 
+                    onUpdateDroplets={updateDroplets} 
+                    onSetDroplets={setDropletsValue}
+                    onDelete={deletePond}
+                  />
+                ))}
+
+                {ponds.length === 0 && (
+                  <div className="text-center py-10 opacity-50">
+                    <Droplets size={48} className="mx-auto mb-2 text-slate-300" />
+                    <p className="text-slate-400">No ponds created yet.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        };
+
+        const SummaryModule = ({ weightLogs, dietLogs, exerciseLogs, transactions }) => {
+          const currentMonth = new Date().getMonth();
+          
+          const thisMonthExercise = exerciseLogs.filter(l => new Date(l.date).getMonth() === currentMonth);
+          const totalMins = thisMonthExercise.reduce((sum, l) => sum + l.durationMinutes, 0);
+
+          const thisMonthDiet = dietLogs.filter(l => new Date(l.date).getMonth() === currentMonth);
+          const healthyMeals = thisMonthDiet.filter(l => 
+            l.vegetableBowls >= 1 && 
+            (l.sauce === SauceAmount.NONE || l.sauce === SauceAmount.LITTLE) &&
+            !l.hasColdDrink && 
+            !l.hasSugarDrink
+          ).length;
+
+          const latestWeight = weightLogs.length > 0 ? weightLogs[0].weight : 'N/A';
+
+          const thisMonthMoney = transactions.filter(l => new Date(l.date).getMonth() === currentMonth);
+          const income = thisMonthMoney.filter(t => t.type === TransactionType.INCOME).reduce((s, t) => s + t.amount, 0);
+          const expense = thisMonthMoney.filter(t => t.type === TransactionType.EXPENSE).reduce((s, t) => s + t.amount, 0);
+
+          return (
+            <div className="space-y-4">
+              <div className="bg-gradient-to-br from-pink-400 to-pink-500 rounded-2xl p-6 text-white shadow-lg shadow-pink-200">
+                <h2 className="text-2xl font-bold mb-1">Hello, Fat Boy!</h2>
+                <p className="opacity-90">Keep pushing your limits this month.</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                   <p className="text-slate-400 text-xs font-bold uppercase">Weight</p>
+                   <p className="text-2xl font-bold text-slate-700">{latestWeight} <span className="text-sm">kg</span></p>
+                </div>
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                   <p className="text-slate-400 text-xs font-bold uppercase">Active Mins</p>
+                   <p className="text-2xl font-bold text-sky-500">{totalMins}</p>
+                </div>
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                   <p className="text-slate-400 text-xs font-bold uppercase">Healthy Meals</p>
+                   <p className="text-2xl font-bold text-green-500">{healthyMeals} <span className="text-sm text-slate-400">/ {thisMonthDiet.length}</span></p>
+                </div>
+                <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100">
+                   <p className="text-slate-400 text-xs font-bold uppercase">Savings</p>
+                   <p className="text-2xl font-bold text-indigo-500">£{(income - expense).toFixed(0)}</p>
+                </div>
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+                <h3 className="font-bold text-slate-700 mb-2">Mom's Message</h3>
+                <p className="text-slate-500 italic text-sm">"Remember to eat more vegetables and save money for your future! Love you!"</p>
+              </div>
+            </div>
+          );
+        };
+
+        const DEFAULT_EXPENSE_CATEGORIES = [
+          { id: 'meals', name: 'Meals', warning: 500, danger: 800 },
+          { id: 'transport', name: 'Transport', warning: 200, danger: 400 },
+          { id: 'accommodation', name: 'Accommodation', warning: 800, danger: 1200 },
+          { id: 'travelling', name: 'Travelling', warning: 300, danger: 600 },
+          { id: 'leisure', name: 'Leisure', warning: 100, danger: 300 },
+          { id: 'back_home', name: 'Back Home', warning: 2000, danger: 3000 },
+        ];
+
+        const DEFAULT_INCOME_CATEGORIES = [
+          { id: 'pocket', name: 'Pocket Money' },
+          { id: 'part_time', name: 'Part Time' },
+          { id: 'interest', name: 'Interest' },
+          { id: 'other', name: 'Other' },
+        ];
+
+        const App = () => {
+          const [activeTab, setActiveTab] = useStorage('active_tab', 'summary');
+          
+          const [weightLogs, setWeightLogs] = useStorage('weight_logs', []);
+          const [dietLogs, setDietLogs] = useStorage('diet_logs', []);
+          const [exerciseLogs, setExerciseLogs] = useStorage('exercise_logs', []);
+          const [transactions, setTransactions] = useStorage('money_logs', []);
+          const [ponds, setPonds] = useStorage('bank_ponds', []);
+
+          // New configurable state
+          const [expenseCategories, setExpenseCategories] = useStorage('expense_cats', DEFAULT_EXPENSE_CATEGORIES);
+          const [incomeCategories, setIncomeCategories] = useStorage('income_cats', DEFAULT_INCOME_CATEGORIES);
+
+          const [alert, setAlert] = useState(null);
+
+          useEffect(() => {
+            if (weightLogs.length > 0) {
+              const lastWeight = new Date(weightLogs[0].date).getTime();
+              const now = Date.now();
+              const diffDays = (now - lastWeight) / (1000 * 60 * 60 * 24);
+              if (diffDays > 3) {
+                setAlert("⚠️ It's been over 3 days! Please weigh yourself.");
+              } else {
+                setAlert(null);
+              }
             }
+          }, [weightLogs]);
+
+          const renderContent = () => {
+            switch (activeTab) {
+              case 'summary':
+                return <SummaryModule 
+                    weightLogs={weightLogs}
+                    dietLogs={dietLogs}
+                    exerciseLogs={exerciseLogs}
+                    transactions={transactions}
+                />;
+              case 'weight':
+                return <WeightSection logs={weightLogs} setLogs={setWeightLogs} />;
+              case 'diet':
+                return <DietSection logs={dietLogs} setLogs={setDietLogs} />;
+              case 'exercise':
+                return <ExerciseSection logs={exerciseLogs} setLogs={setExerciseLogs} />;
+              case 'money':
+                return <MoneySection 
+                    transactions={transactions} 
+                    setTransactions={setTransactions} 
+                    expenseCategories={expenseCategories}
+                    setExpenseCategories={setExpenseCategories}
+                    incomeCategories={incomeCategories}
+                    setIncomeCategories={setIncomeCategories}
+                />;
+              case 'bank':
+                return <BankSection ponds={ponds} setPonds={setPonds} />;
+              default:
+                return <SummaryModule 
+                    weightLogs={weightLogs}
+                    dietLogs={dietLogs}
+                    exerciseLogs={exerciseLogs}
+                    transactions={transactions}
+                />;
+            }
+          };
+
+          return (
+            <Layout activeTab={activeTab} onTabChange={setActiveTab} alert={alert}>
+              {activeTab !== 'summary' && (
+                  <div className="mb-6">
+                      <h2 className="text-2xl font-bold text-slate-800 capitalize">{activeTab}</h2>
+                      <p className="text-slate-400 text-sm">Track your progress</p>
+                  </div>
+              )}
+              {renderContent()}
+            </Layout>
+          );
+        };
+
+        const container = document.getElementById('root');
+        if (container) {
+          const root = createRoot(container);
+          root.render(<App />);
         }
-
-        // Initial Render
-        render();
-
     </script>
 </body>
 </html>
